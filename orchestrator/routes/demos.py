@@ -1,24 +1,27 @@
-"""Demo routes: create/inspect demos and drive the M1..M4 stages."""
+"""Demo routes: create/inspect demos and drive the M1..M6 stages."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 import anthropic
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from orchestrator.agents.claude_client import StructuredOutputError
 from orchestrator.agents.composer import ComposeConfigError, ComposeError
 from orchestrator.pipeline import Pipeline
+from orchestrator.schemas.certification import Certification, Manifest
 from orchestrator.schemas.demo import Demo, DemoStatus, PlanSummary
 from orchestrator.storage import DemoNotFoundError, InvalidTransitionError
 from orchestrator.tools.terraform_runner import TerraformNotFoundError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/demos", tags=["demos"])
+shared_router = APIRouter(prefix="/api/shared", tags=["shared"])
+T = TypeVar("T")
 
 
 class CreateDemoRequest(BaseModel):
@@ -65,7 +68,7 @@ def get_pipeline(request: Request) -> Pipeline:
 PipelineDep = Annotated[Pipeline, Depends(get_pipeline)]
 
 
-def _guard(fn: Callable[[], Demo]) -> Demo:
+def _guard(fn: Callable[[], T]) -> T:
     """Run a pipeline call and translate domain errors to HTTP errors."""
     try:
         return fn()
@@ -164,6 +167,44 @@ def seed(
     return demo
 
 
+@router.post("/{demo_id}/certify", status_code=202, response_model=Demo)
+def certify(demo_id: str, background: BackgroundTasks, pipeline: PipelineDep) -> Demo:
+    """M5: verify the live instance against its blueprint, in the background.
+
+    Opens a temporary firewall rule for this machine on PostgreSQL (removed afterwards, and
+    checked). Failed checks are results, not errors: poll GET /api/demos/{id}/certification.
+    """
+    demo = _guard(lambda: pipeline.start_certify(demo_id))
+    background.add_task(pipeline.run_certify, demo_id)
+    return demo
+
+
+@router.get("/{demo_id}/certification", response_model=Certification | None)
+def get_certification(demo_id: str, pipeline: PipelineDep) -> Certification | None:
+    return _guard(lambda: pipeline.store.get(demo_id)).certification
+
+
+@router.get("/{demo_id}/manifest", response_model=Manifest)
+def preview_manifest(demo_id: str, pipeline: PipelineDep) -> Manifest:
+    """Exactly what the public share page would show now. Publishes nothing."""
+    return _guard(lambda: pipeline.manifest_preview(demo_id))
+
+
+@router.post("/{demo_id}/publish", response_model=Demo)
+def publish(demo_id: str, pipeline: PipelineDep) -> Demo:
+    """M6: create the shareable link (needs a passing certification), or refresh its snapshot.
+
+    Anyone with the link can read the manifest; it contains no credentials or hostnames.
+    """
+    return _guard(lambda: pipeline.publish(demo_id))
+
+
+@router.delete("/{demo_id}/publish", response_model=Demo)
+def unpublish(demo_id: str, pipeline: PipelineDep) -> Demo:
+    """Revoke the share link immediately."""
+    return _guard(lambda: pipeline.unpublish(demo_id))
+
+
 @router.post("/{demo_id}/destroy", status_code=202, response_model=Demo)
 def destroy(
     demo_id: str, body: ConfirmRequest, background: BackgroundTasks, pipeline: PipelineDep
@@ -193,3 +234,18 @@ def get_logs(
 def _require_confirm(body: ConfirmRequest, what: str) -> None:
     if not body.confirm:
         raise HTTPException(400, f'send {{"confirm": true}} to {what}')
+
+
+@shared_router.get("/{token}", response_model=Manifest)
+def shared_manifest(token: str, request: Request, response: Response) -> Manifest:
+    """Public, read-only. The unguessable token is the credential; unknown/revoked tokens are 404.
+
+    Deliberately independent of the pipeline, so a share-only deployment needs no API keys.
+    """
+    read: Callable[[str], Manifest | None] = request.app.state.share_reader
+    manifest = read(token)
+    if manifest is None:
+        raise HTTPException(404, "this share link does not exist or was revoked")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return manifest

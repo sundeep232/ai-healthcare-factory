@@ -47,6 +47,46 @@ def _partition_key(path: str) -> Any:
     return PartitionKey(path=path)
 
 
+def resolve_connections(outputs: dict[str, Any]) -> dict[str, Any]:
+    """The deterministic ``factory_connections`` output, or a SeedError if the deployment lacks it."""
+    conns = outputs.get(CONNECTIONS_OUTPUT)
+    if not isinstance(conns, dict) or not conns.get("resource_group"):
+        raise SeedError(
+            "connections",
+            f"this deployment has no '{CONNECTIONS_OUTPUT}' output. It predates data loading: "
+            "regenerate (M3) and redeploy (M4) it first.",
+        )
+    return conns
+
+
+def plan_placements(
+    blueprint: Blueprint, conns: dict[str, Any]
+) -> list[tuple[str, str, list[TableSpec]]]:
+    """Group tables by target resource, as the blueprint's data plan dictates."""
+    types = {r.id: r.type for r in blueprint.resources}
+    tables: dict[str, list[TableSpec]] = defaultdict(list)
+    for entry in blueprint.data_plan:
+        tables[entry.target_resource_id].extend(tables_for(entry.domain))
+
+    placements: list[tuple[str, str, list[TableSpec]]] = []
+    for resource_id, specs in tables.items():
+        kind = KIND_BY_TYPE.get(types.get(resource_id, ""))
+        if kind is None:
+            raise SeedError(
+                "plan", f"resource '{resource_id}' ({types.get(resource_id)}) cannot hold data"
+            )
+        if resource_id not in (conns.get(kind) or {}):
+            raise SeedError(
+                "connections", f"no connection facts for {kind} resource '{resource_id}'"
+            )
+        if kind == "cosmos":
+            bad = [s.name for s in specs if not s.container]
+            if bad:
+                raise SeedError("plan", f"tables {bad} cannot be stored in Cosmos DB")
+        placements.append((resource_id, kind, specs))
+    return placements
+
+
 class SeederAgent:
     def __init__(
         self,
@@ -69,8 +109,8 @@ class SeederAgent:
         seed: int,
         today: date | None = None,
     ) -> SeedSummary:
-        conns = self._connections(outputs)
-        placements = self._placements(blueprint, conns)
+        conns = resolve_connections(outputs)
+        placements = plan_placements(blueprint, conns)
 
         ctx = build_context(blueprint, seed=seed, today=today)
         dataset = generate_dataset(ctx)
@@ -92,47 +132,6 @@ class SeederAgent:
             total_rows=sum(sum(t.tables.values()) for t in results),
             warnings=list(self._azure.warnings),
         )
-
-    # -- planning ----------------------------------------------------------
-
-    @staticmethod
-    def _connections(outputs: dict[str, Any]) -> dict[str, Any]:
-        conns = outputs.get(CONNECTIONS_OUTPUT)
-        if not isinstance(conns, dict) or not conns.get("resource_group"):
-            raise SeedError(
-                "connections",
-                f"this deployment has no '{CONNECTIONS_OUTPUT}' output. It predates data loading: "
-                "regenerate (M3) and redeploy (M4) it first.",
-            )
-        return conns
-
-    @staticmethod
-    def _placements(
-        blueprint: Blueprint, conns: dict[str, Any]
-    ) -> list[tuple[str, str, list[TableSpec]]]:
-        """Group tables by target resource, as the blueprint's data plan dictates."""
-        types = {r.id: r.type for r in blueprint.resources}
-        tables: dict[str, list[TableSpec]] = defaultdict(list)
-        for entry in blueprint.data_plan:
-            tables[entry.target_resource_id].extend(tables_for(entry.domain))
-
-        placements: list[tuple[str, str, list[TableSpec]]] = []
-        for resource_id, specs in tables.items():
-            kind = KIND_BY_TYPE.get(types.get(resource_id, ""))
-            if kind is None:
-                raise SeedError(
-                    "plan", f"resource '{resource_id}' ({types.get(resource_id)}) cannot hold data"
-                )
-            if resource_id not in (conns.get(kind) or {}):
-                raise SeedError(
-                    "connections", f"no connection facts for {kind} resource '{resource_id}'"
-                )
-            if kind == "cosmos":
-                bad = [s.name for s in specs if not s.container]
-                if bad:
-                    raise SeedError("plan", f"tables {bad} cannot be stored in Cosmos DB")
-            placements.append((resource_id, kind, specs))
-        return placements
 
     # -- loading -----------------------------------------------------------
 

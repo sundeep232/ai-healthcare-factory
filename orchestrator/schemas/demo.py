@@ -1,4 +1,4 @@
-"""Demo record: the API-facing state of one factory run across M1..M4."""
+"""Demo record: the API-facing state of one factory run across M1..M6."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from orchestrator.schemas.blueprint import Blueprint
+from orchestrator.schemas.certification import Certification, Publication
 from orchestrator.schemas.requirements import Requirements
 
 
@@ -26,13 +27,19 @@ class DemoStatus(str, Enum):
     DEPLOYING = "deploying"  # M4 apply running
     DEPLOYED = "deployed"  # M4 done: resources live
     SEEDING = "seeding"  # M3b loading synthetic data into the live databases
+    CERTIFYING = "certifying"  # M5 running checks against the live instance
     DESTROYING = "destroying"
     DESTROYED = "destroyed"
     FAILED = "failed"  # last operation failed; see `error` and `failed_stage`
 
     @property
     def is_busy(self) -> bool:
-        return self in (DemoStatus.DEPLOYING, DemoStatus.SEEDING, DemoStatus.DESTROYING)
+        return self in (
+            DemoStatus.DEPLOYING,
+            DemoStatus.SEEDING,
+            DemoStatus.CERTIFYING,
+            DemoStatus.DESTROYING,
+        )
 
 
 class PlanSummary(BaseModel):
@@ -89,6 +96,10 @@ class Demo(BaseModel):
     plan: PlanSummary | None = None
     outputs: dict[str, Any] = Field(default_factory=dict)
     data: SeedSummary | None = Field(None, description="Last successful M3b data load.")
+    certification: Certification | None = Field(
+        None, description="Last M5 run; cleared whenever the live instance changes."
+    )
+    publication: Publication | None = Field(None, description="Active M6 share link, if any.")
     failed_stage: str | None = None
     error: str | None = None
     events: list[DemoEvent] = Field(default_factory=list)

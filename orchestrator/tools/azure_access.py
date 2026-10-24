@@ -152,6 +152,17 @@ class AzureAccess:
                 logger.error(message)
                 self.warnings.append(message)
 
+    def postgres_firewall_rule_names(self, resource_group: str, server_name: str) -> list[str]:
+        """Names of every firewall rule currently on the server (used by M5 to prove cleanup)."""
+        self._need_subscription()
+        url = (
+            f"{ARM}/subscriptions/{self._sub}/resourceGroups/{resource_group}/providers/"
+            f"Microsoft.DBforPostgreSQL/flexibleServers/{server_name}/firewallRules"
+            f"?api-version={PG_API}"
+        )
+        body = self._arm("GET", url, ok=(200,)).json()
+        return [str(r.get("name", "")) for r in body.get("value", [])]
+
     # -- internals ---------------------------------------------------------
 
     def _need_subscription(self) -> None:

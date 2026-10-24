@@ -110,6 +110,18 @@ def test_firewall_rule_opens_waits_and_closes() -> None:
     assert az.warnings == []
 
 
+def test_firewall_rule_names_lists_every_rule_on_the_server() -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.method == "GET" and req.url.path.endswith("/flexibleServers/psql-x/firewallRules")
+        assert req.headers["Authorization"] == "Bearer tkn-123"
+        return httpx.Response(200, json={"value": [{"name": "AllowAzure"}, {"name": "factory-loader-1-2-3-4"}]})
+
+    assert access(handler).postgres_firewall_rule_names("rg-x", "psql-x") == ["AllowAzure", "factory-loader-1-2-3-4"]
+    with pytest.raises(AzureAccessError, match="HTTP 403"):
+        access(lambda r: httpx.Response(403, json={"error": {"code": "Forbidden", "message": "no"}})
+               ).postgres_firewall_rule_names("rg-x", "psql-x")
+
+
 def test_firewall_rule_is_removed_even_if_the_load_fails() -> None:
     log: list[str] = []
     az = access(firewall_handler(log))

@@ -1,4 +1,4 @@
-"""Pipeline: orchestrates M1..M4 for a Demo and owns its state transitions.
+"""Pipeline: orchestrates M1..M6 for a Demo and owns its state transitions.
 
 Stages are separate calls on purpose: a human reviews the blueprint and the
 Terraform plan before anything that costs money (deploy) is started.
@@ -8,6 +8,8 @@ Terraform plan before anything that costs money (deploy) is started.
     plan     (M4 dry) -> GENERATED, plan summary stored
     deploy   (M4)     -> DEPLOYING -> DEPLOYED | FAILED      (background)
     seed     (M3b)    -> SEEDING   -> DEPLOYED | FAILED      (background)
+    certify  (M5)     -> CERTIFYING -> DEPLOYED              (background; problems become failed checks)
+    publish  (M6)     -> DEPLOYED, share link created        (instant; needs a passing certification)
     destroy  (M4)     -> DESTROYING -> DESTROYED | FAILED    (background)
 """
 
@@ -18,7 +20,15 @@ from typing import Any
 
 from orchestrator.agents.composer import ComposeError
 from orchestrator.agents.data_agents import build_context, generate_dataset
+from orchestrator.agents.publisher import Publisher
 from orchestrator.agents.seeder import SeedError
+from orchestrator.schemas.certification import (
+    Certification,
+    CheckCategory,
+    CheckResult,
+    CheckStatus,
+    Manifest,
+)
 from orchestrator.schemas.demo import Demo, DemoStatus
 from orchestrator.storage import DemoStore, InvalidTransitionError, update
 
@@ -29,6 +39,7 @@ _CAN_GENERATE = (DemoStatus.PLANNED, DemoStatus.GENERATED, DemoStatus.FAILED)
 _CAN_PLAN = (DemoStatus.GENERATED, DemoStatus.FAILED)
 _CAN_DEPLOY = (DemoStatus.GENERATED, DemoStatus.FAILED)
 _CAN_SEED = (DemoStatus.DEPLOYED, DemoStatus.FAILED)
+_CAN_CERTIFY = (DemoStatus.DEPLOYED,)
 _CAN_DESTROY = (DemoStatus.DEPLOYED, DemoStatus.FAILED)
 
 
@@ -53,6 +64,8 @@ class Pipeline:
         generator: Any,
         composer: Any,
         seeder: Any = None,
+        certifier: Any = None,
+        publisher: Publisher | None = None,
     ) -> None:
         self.store = store
         self._interpreter = interpreter
@@ -60,6 +73,8 @@ class Pipeline:
         self._generator = generator
         self._composer = composer
         self._seeder = seeder
+        self._certifier = certifier
+        self._publisher = publisher
 
     # -- M1 + M2 -----------------------------------------------------------
 
@@ -108,6 +123,7 @@ class Pipeline:
         """Atomically claim the demo for deployment (raises InvalidTransitionError if busy)."""
         self._require_state(demo_id, _CAN_DEPLOY, need_instance=True)
         self.store.begin(demo_id, _CAN_DEPLOY, DemoStatus.DEPLOYING)
+        self._unshare(demo_id, "the instance is being redeployed")
         return update(self.store, demo_id, lambda d: d.log("deploy", "deployment started"))
 
     def run_deploy(self, demo_id: str) -> None:
@@ -157,6 +173,7 @@ class Pipeline:
         if not demo.outputs:
             raise InvalidTransitionError("demo is not deployed yet; deploy it before seeding")
         self.store.begin(demo_id, _CAN_SEED, DemoStatus.SEEDING)
+        self._unshare(demo_id, "the data is being reloaded")
         return update(self.store, demo_id, lambda d: d.log("seed", "data load started"))
 
     def run_seed(self, demo_id: str, seed: int | None = None) -> None:
@@ -187,9 +204,90 @@ class Pipeline:
 
         update(self.store, demo_id, done)
 
+    # -- M5 / M6 -----------------------------------------------------------
+
+    def start_certify(self, demo_id: str) -> Demo:
+        """Atomically claim a deployed demo for certification."""
+        demo = self._require_state(demo_id, _CAN_CERTIFY, need_blueprint=True)
+        if not demo.outputs:
+            raise InvalidTransitionError("demo has no deployment outputs; deploy it first")
+        self.store.begin(demo_id, _CAN_CERTIFY, DemoStatus.CERTIFYING)
+        return update(self.store, demo_id, lambda d: d.log("certify", "certification started"))
+
+    def run_certify(self, demo_id: str) -> None:
+        """Background worker. Always ends back in DEPLOYED: a failed check is a result, not a crash."""
+        demo = self.store.get(demo_id)
+        assert demo.blueprint is not None
+        try:
+            if self._certifier is None:
+                raise RuntimeError("no certifier configured")
+            cert = self._certifier.certify(demo.blueprint, demo.outputs, demo.data)
+        except Exception as exc:  # noqa: BLE001 - a worker must always record the outcome
+            logger.exception("certify crashed for %s", demo_id)
+            cert = Certification(
+                checks=[CheckResult(
+                    id="certify.run", category=CheckCategory.DEPLOYMENT, title="Certification ran",
+                    status=CheckStatus.FAIL, summary="The certification run itself failed.",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )],
+                blueprint_version=demo.blueprint.version,
+                data_seed=demo.data.seed if demo.data else None,
+            )
+
+        revoked: list[str] = []
+
+        def done(d: Demo) -> None:
+            d.status = DemoStatus.DEPLOYED
+            d.certification = cert
+            counts = cert.summary
+            d.log("certify", ("CERTIFIED" if cert.passed else "NOT certified")
+                  + f": {counts['pass']} passed, {counts['warn']} warnings, {counts['fail']} failed")
+            if not cert.passed and d.publication:  # the public page would no longer be true
+                revoked.append(d.publication.token)
+                d.publication = None
+                d.log("publish", "share link revoked: the latest certification failed")
+
+        update(self.store, demo_id, done)
+        for token in revoked:
+            self._need_publisher().revoke(token)
+
+    def manifest_preview(self, demo_id: str) -> Manifest:
+        """What publishing would show right now (validates that publishing is allowed)."""
+        return self._need_publisher().preview(self.store.get(demo_id))
+
+    def publish(self, demo_id: str) -> Demo:
+        """Create the share link, or refresh the snapshot behind the existing one."""
+        publisher = self._need_publisher()
+        demo = self.store.get(demo_id)
+        publication, _ = publisher.publish(demo)  # raises InvalidTransitionError if not allowed
+        refreshed = demo.publication is not None
+
+        def done(d: Demo) -> None:
+            d.publication = publication
+            d.log("publish", "share page refreshed" if refreshed else "published: share link created")
+
+        return update(self.store, demo_id, done)
+
+    def unpublish(self, demo_id: str) -> Demo:
+        publisher = self._need_publisher()
+        demo = self.store.get(demo_id)
+        if demo.publication is None:
+            raise InvalidTransitionError("demo is not published")
+        publisher.revoke(demo.publication.token)
+
+        def done(d: Demo) -> None:
+            d.publication = None
+            d.log("publish", "unpublished: share link revoked")
+
+        return update(self.store, demo_id, done)
+
+    def shared_manifest(self, token: str) -> Manifest | None:
+        """Public lookup by share token. None for unknown/revoked tokens."""
+        return self._need_publisher().read(token)
     def start_destroy(self, demo_id: str) -> Demo:
         self._require_state(demo_id, _CAN_DESTROY, need_instance=True)
         self.store.begin(demo_id, _CAN_DESTROY, DemoStatus.DESTROYING)
+        self._unshare(demo_id, "the demo is being destroyed")
         return update(self.store, demo_id, lambda d: d.log("destroy", "teardown started"))
 
     def run_destroy(self, demo_id: str) -> None:
@@ -209,6 +307,7 @@ class Pipeline:
             d.status = DemoStatus.DESTROYED
             d.outputs = {}
             d.data = None  # the databases are gone
+            d.certification = d.publication = None
             d.log("destroy", "all resources destroyed")
 
         update(self.store, demo_id, done)
@@ -219,6 +318,27 @@ class Pipeline:
 
     # -- internals ---------------------------------------------------------
 
+    def _need_publisher(self) -> Publisher:
+        if self._publisher is None:
+            raise InvalidTransitionError("publishing is not configured")
+        return self._publisher
+
+    def _unshare(self, demo_id: str, why: str) -> None:
+        """Drop the certification and revoke the share link: the live instance is about to change."""
+        revoked: list[str] = []
+
+        def clear(d: Demo) -> None:
+            if d.publication:
+                revoked.append(d.publication.token)
+                d.log("publish", f"share link revoked: {why}")
+            if d.certification:
+                d.log("certify", f"certification cleared: {why}")
+            d.certification = d.publication = None
+
+        update(self.store, demo_id, clear)
+        for token in revoked:
+            if self._publisher is not None:
+                self._publisher.revoke(token)
     def _fail(self, demo_id: str, stage: str, message: str) -> None:
         def mark(d: Demo) -> None:
             d.status = DemoStatus.FAILED

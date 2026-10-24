@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     tfstate_resource_group: str = "rg-factory-shared"
     # M3b: public IPv4 of this machine, if auto-detection (api.ipify.org) is blocked.
     loader_client_ip: str = ""
+    # Origin used to build absolute share links, e.g. https://demos.example.com. Empty = relative paths.
+    public_base_url: str = ""
+    # Run as a public, read-only share server: only /api/shared/* and the UI are served.
+    # Everything that can spend money or change Azure is not even routed. Safe to expose.
+    share_only: bool = False
     # Where the API keeps demo records (JSON files). Git-ignored.
     data_dir: Path = PROJECT_ROOT / ".factory-data"
     environment: str = "development"

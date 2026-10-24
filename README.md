@@ -101,7 +101,7 @@ ai-healthcare-factory/
 | 4 | M3 Generate (Terraform modules + composer) | ? Done |
 | 5 | M4 Compose + FastAPI routes | ? Done (apply not yet run end to end) |
 | 6 | M3b Data agents (5 domains) | ✅ Done (live Azure seed not yet run end to end)
-| 7 | M5 Certify + M6 Publish + UI | ? Planned |
+| 7 | M5 Certify + M6 Publish + UI | ✅ Done (live Azure certify not yet run end to end) |
 | 8 | M7 Regenerate + hardening + demo | ? Planned |
 
 ## Run the API
@@ -121,14 +121,47 @@ Bind to `127.0.0.1` only: there is no authentication yet, and `deploy` creates b
 | `POST /api/demos/{id}/destroy {"confirm": true}` | M4 | Tear everything down |
 | `GET /api/demos/{id}` / `/logs` | | Status, outputs, Terraform log tail |
 
+| `POST /api/demos/{id}/data/preview` / `seed` | M3b | Synthetic data dry run / load into the live databases |
+| `POST /api/demos/{id}/certify` | M5 | Validate the live instance (infrastructure, data integrity, business rules, synthetic-data safety, endpoints) |
+| `GET /api/demos/{id}/manifest` | M6 | Preview exactly what a share link would expose |
+| `POST /api/demos/{id}/publish` / `unpublish` | M6 | Create or revoke the unguessable share link (requires a passing certification) |
+| `GET /api/shared/{token}` | M6 | Public, read-only manifest. This is the only endpoint a viewer needs |
+
+Deploying, seeding or destroying an instance revokes its share link and clears its certification, because the evidence no longer describes what is running.
+
 Demo records are stored as JSON in `.factory-data/` (git-ignored). Deploy refuses any plan that would delete resources.
+
+## Run the UI
+
+```powershell
+cd ui
+npm install
+npm run dev        # http://localhost:5173, proxies /api to 127.0.0.1:8000
+npm run build      # outputs ui/dist, which the API serves automatically
+npm test           # stage-logic tests
+```
+
+The UI walks one demo through intent → blueprint → generate → plan → deploy → seed → certify → publish, asks for confirmation before billable or destructive steps, and shows the public view of a share link.
+
+## Sharing a demo
+
+The orchestrator itself has no authentication, so keep it on `127.0.0.1`. To give someone a link, run a second, share-only server. It exposes just `/api/shared/{token}` and the built UI, and needs no cloud credentials:
+
+```powershell
+$env:SHARE_ONLY = "true"
+$env:PUBLIC_BASE_URL = "https://demo.example.com"
+uvicorn orchestrator.app:create_app --factory --host 0.0.0.0 --port 8080
+```
+
+It must read the same `.factory-data/` as the orchestrator. Published manifests contain only an allow-listed, secret-free summary: no connection strings, no keys, no server error text.
+
 ## Tech stack
 
 - **Backend:** Python 3.11, FastAPI, Pydantic v2
 - **AI:** Claude Sonnet 5.5 (Anthropic API)
 - **IaC:** Terraform (azurerm provider v4)
 - **Cloud:** Microsoft Azure
-- **Frontend:** React
+- **Frontend:** React 19 + TypeScript (Vite)
 
 ## Getting started
 

@@ -41,7 +41,7 @@ result, and publishes a shareable demo link.
 |---|---|---|---|
 | M1 | Interpret | Natural-language intent | Requirements JSON |
 | M2 | Plan | Requirements JSON | Versioned Blueprint JSON |
-| M3 | Generate | Blueprint | Terraform HCL (written by Claude) |
+| M3 | Generate | Blueprint | Terraform instance dir (Claude composes vetted modules) |
 | M4 | Compose | HCL | Live Azure resources (`terraform apply`) |
 | M3b | Data | Blueprint + live databases | Synthetic data for 5 domains |
 | M5 | Certify | Live instance | Validation results + evidence |
@@ -53,6 +53,8 @@ Intent → M1 → M2 → M3 → M4 → M3b → M5 → M6
                 ▲                         │
                 └────────── M7 ◄──────────┘ (blueprint delta)
 ```
+
+**M3 design.** Claude never writes raw `resource` blocks. Each catalog capability has a reviewed module in `terraform/modules/<type>/`. Claude writes only `main.tf` (one `module` block per blueprint resource) and `outputs.tf`. Providers, backend, variables, naming suffix and tags come from `terraform/templates/`. Output is accepted only if it passes (1) composition rules (`orchestrator/tools/terraform_files.py`: one module per resource, correct source, dependencies visible, no GUIDs, no secret outputs) and (2) `terraform init -backend=false` + `terraform validate`. Failures go back to Claude as feedback (3 attempts). M3 never touches Azure; the state key is `instances/<slug>-<id8>-v<version>.tfstate`, with backend details supplied at `init` time by M4.
 
 **Data agents (M3b):** Member, Provider, Claims, Authorization, Care Management.
 

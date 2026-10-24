@@ -1,0 +1,26 @@
+# Unique suffix keeps globally-named resources (storage, Key Vault, ...) from colliding.
+resource "random_string" "suffix" {
+  length  = 5
+  upper   = false
+  special = false
+  numeric = true
+
+  keepers = {
+    blueprint_id = "{{BLUEPRINT_ID}}"
+  }
+}
+
+locals {
+  suffix = random_string.suffix.result
+
+  tags = merge(
+    {
+      project           = "ai-healthcare-factory"
+      managed_by        = "terraform"
+      blueprint_id      = "{{BLUEPRINT_ID}}"
+      blueprint_version = "{{VERSION}}"
+      ttl_days          = "{{TTL_DAYS}}"
+    },
+    var.tags,
+  )
+}

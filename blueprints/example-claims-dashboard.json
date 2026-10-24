@@ -1,0 +1,38 @@
+{
+  "blueprint_id": "11111111-1111-4111-8111-111111111111",
+  "version": 1,
+  "parent_version": null,
+  "created_at": "2026-10-24T00:00:00Z",
+  "instance_slug": "claims-dash",
+  "summary": "Claims analytics demo: a Postgres-backed API with 5,000 synthetic members and a web dashboard showing claim volume, denials, and provider performance.",
+  "requirements": {
+    "demo_name": "Claims Analytics Dashboard",
+    "summary": "Show payer executives how claim volume, denial rates, and provider performance can be explored in a live dashboard.",
+    "target_audience": "Payer executives and claims operations leaders",
+    "business_goals": [
+      "Show claim volume and denial trends",
+      "Compare provider performance"
+    ],
+    "domains": ["claims", "member", "provider"],
+    "data_scale": { "member_count": 5000, "history_months": 12 },
+    "experience": { "web_ui": true, "api": true, "analytics_dashboard": true },
+    "azure_region": "eastus2",
+    "ttl_days": 14,
+    "synthetic_data_only": true,
+    "assumptions": ["Defaulted to 12 months of claims history."],
+    "open_questions": []
+  },
+  "resources": [
+    { "id": "rg", "type": "resource_group", "name": "claims-dash-rg", "purpose": "Holds every resource in this demo", "sku": null, "config": {}, "depends_on": [] },
+    { "id": "logs", "type": "log_analytics", "name": "claims-dash-logs", "purpose": "Central logging for the API", "sku": "PerGB2018", "config": { "retention_in_days": 30 }, "depends_on": ["rg"] },
+    { "id": "db", "type": "postgresql_flexible", "name": "claims-dash-db", "purpose": "Stores members, providers, and claims", "sku": "B_Standard_B1ms", "config": { "storage_mb": 32768, "version": "16" }, "depends_on": ["rg"] },
+    { "id": "kv", "type": "key_vault", "name": "claims-dash-kv", "purpose": "Holds the database credentials", "sku": "standard", "config": {}, "depends_on": ["rg"] },
+    { "id": "api", "type": "container_app", "name": "claims-dash-api", "purpose": "Serves claims data to the dashboard", "sku": "Consumption", "config": { "cpu": 0.5, "memory": "1Gi", "min_replicas": 0, "max_replicas": 2 }, "depends_on": ["rg", "logs", "db", "kv"] },
+    { "id": "web", "type": "static_web_app", "name": "claims-dash-web", "purpose": "Hosts the analytics dashboard UI", "sku": "Free", "config": {}, "depends_on": ["rg"] }
+  ],
+  "data_plan": [
+    { "domain": "member", "target_resource_id": "db", "record_count": 5000 },
+    { "domain": "provider", "target_resource_id": "db", "record_count": 150 },
+    { "domain": "claims", "target_resource_id": "db", "record_count": 50000 }
+  ]
+}

@@ -28,7 +28,7 @@ M1 Interpret → M2 Plan → M3 Generate → M4 Compose → M3b Data → M5 Cert
 |---|---|---|
 | M1 | Interpret | Natural language intent → Requirements JSON |
 | M2 | Plan | Requirements → Versioned Blueprint JSON |
-| M3 | Generate | Blueprint → Terraform HCL (Claude writes it) |
+| M3 | Generate | Blueprint → Terraform (Claude composes vetted modules; `python scripts/run_m3.py <blueprint.json>`) |
 | M4 | Compose | `terraform apply` → live Azure resources |
 | M3b | Data | Synthetic data for 5 healthcare domains |
 | M5 | Certify | Validation + evidence |
@@ -95,10 +95,10 @@ ai-healthcare-factory/
 
 | Week | Milestone | Status |
 |---|---|---|
-| 1 | Scaffolding + Claude integration | 🚧 In progress |
-| 2 | Azure bootstrap (shared resources) | ⏳ Planned |
-| 3 | M1 Interpret + M2 Plan | ⏳ Planned |
-| 4 | M3 Generate + capability catalog | ⏳ Planned |
+| 1 | Scaffolding + Claude integration | ✅ Done |
+| 2 | Azure bootstrap (shared resources) | ✅ Done |
+| 3 | M1 Interpret + M2 Plan | ✅ Done |
+| 4 | M3 Generate (Terraform modules + composer) | ✅ Done |
 | 5 | M4 Compose + FastAPI routes | ⏳ Planned |
 | 6 | M3b Data agents (5 domains) | ⏳ Planned |
 | 7 | M5 Certify + M6 Publish + UI | ⏳ Planned |

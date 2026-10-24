@@ -6,7 +6,7 @@
 ![Python](https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white)
 ![Azure](https://img.shields.io/badge/cloud-Azure-0078D4?logo=microsoftazure&logoColor=white)
 ![Terraform](https://img.shields.io/badge/IaC-Terraform-7B42BC?logo=terraform&logoColor=white)
-![Claude](https://img.shields.io/badge/AI-Claude%20Sonnet%204.5-D97757)
+![Claude](https://img.shields.io/badge/AI-Claude%20Sonnet%205.5-D97757)
 
 AI platform that creates healthcare payer demo environments on Azure in minutes, not months.
 
@@ -47,7 +47,7 @@ M1 Interpret → M2 Plan → M3 Generate → M4 Compose → M3b Data → M5 Cert
 
 ```
 ┌──────────┐   ┌────────────────┐   ┌───────────────────┐
-│ React UI │──►│ FastAPI        │──►│ Claude Sonnet 4.5 │
+│ React UI │──►│ FastAPI        │──►│ Claude Sonnet 5.5 │
 │          │   │ Orchestrator   │   │ + Capability Cat. │
 └──────────┘   └───────┬────────┘   └───────────────────┘
                        │
@@ -107,7 +107,7 @@ ai-healthcare-factory/
 ## Tech stack
 
 - **Backend:** Python 3.11, FastAPI, Pydantic v2
-- **AI:** Claude Sonnet 4.5 (Anthropic API)
+- **AI:** Claude Sonnet 5.5 (Anthropic API)
 - **IaC:** Terraform (azurerm provider v4)
 - **Cloud:** Microsoft Azure
 - **Frontend:** React

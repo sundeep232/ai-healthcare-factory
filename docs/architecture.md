@@ -3,7 +3,7 @@
 ## 1. High-Level Architecture
 
 ```
- Business User ──► React UI ──► FastAPI Orchestrator ──► Claude Sonnet 4.5
+ Business User ──► React UI ──► FastAPI Orchestrator ──► Claude Sonnet 5.5
                                      │                    (+ capability catalog)
                                      ├──► Terraform (azurerm v4) ──► Azure
                                      ├──► Data Agents (5 domains) ──► Instance DBs
@@ -61,7 +61,7 @@ Intent → M1 → M2 → M3 → M4 → M3b → M5 → M6
 | Decision | Choice | Rationale |
 |---|---|---|
 | Backend | Python 3.11 + FastAPI | Strong AI/Azure SDK support, async, typed |
-| AI | Claude Sonnet 4.5 | Strong structured output and code generation |
+| AI | Claude Sonnet 5.5 | Strong structured output and code generation |
 | IaC | Terraform, azurerm v4 | Declarative, reviewable, diffable (enables M7) |
 | Cloud | Azure | Target environment for payer demos |
 | Validation | Pydantic v2 | Typed schemas for requirements and blueprints |

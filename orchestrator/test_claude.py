@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke test: verify the Claude Sonnet 4.5 integration works end to end.
+"""Smoke test: verify the Claude integration works end to end.
 
 Loads CLAUDE_API_KEY from the project-root .env, sends one prompt, and prints
-the response, token usage, and estimated cost.
+the response, the model that actually served the request, token usage, and an
+estimated cost.
 
 Usage (from project root, venv active):
     python orchestrator/test_claude.py
@@ -23,13 +24,18 @@ from dotenv import load_dotenv
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 ENV_PATH: Path = PROJECT_ROOT / ".env"
 
-DEFAULT_MODEL: str = "claude-sonnet-4-5"
-PROMPT: str = "Say hello and confirm you're Claude Sonnet 4.5 in exactly 2 sentences"
+DEFAULT_MODEL: str = "claude-sonnet-5-5"
+# Models don't reliably know their own version, so the prompt doesn't ask.
+# The serving model is read from the API response instead (message.model).
+PROMPT: str = "Say hello and describe what you can do in exactly 2 sentences"
 MAX_TOKENS: int = 200
 
-# Claude Sonnet 4.5 pricing (USD per million tokens)
-INPUT_COST_PER_MTOK: float = 3.00
-OUTPUT_COST_PER_MTOK: float = 15.00
+# Default pricing (USD per million tokens). These are Sonnet-tier rates and are
+# an ASSUMPTION for newer models; override in .env if pricing differs:
+#   CLAUDE_INPUT_COST_PER_MTOK=3.00
+#   CLAUDE_OUTPUT_COST_PER_MTOK=15.00
+DEFAULT_INPUT_COST_PER_MTOK: float = 3.00
+DEFAULT_OUTPUT_COST_PER_MTOK: float = 15.00
 
 BOX_WIDTH: int = 70
 PLACEHOLDER_PREFIX: str = "sk-ant-api03-your-key"
@@ -47,11 +53,28 @@ def print_box(text: str, width: int = BOX_WIDTH) -> None:
     print("└" + "─" * (width - 2) + "┘")
 
 
-def calculate_cost(input_tokens: int, output_tokens: int) -> float:
-    """Return the estimated USD cost for the given token counts."""
+def get_pricing() -> tuple[float, float]:
+    """Return (input, output) USD per million tokens, honoring .env overrides.
+
+    Must be called after load_dotenv() so overrides in .env are visible.
+    """
+    try:
+        return (
+            float(os.getenv("CLAUDE_INPUT_COST_PER_MTOK", DEFAULT_INPUT_COST_PER_MTOK)),
+            float(os.getenv("CLAUDE_OUTPUT_COST_PER_MTOK", DEFAULT_OUTPUT_COST_PER_MTOK)),
+        )
+    except ValueError:
+        print("⚠️  Invalid pricing override in .env; using default rates.")
+        return DEFAULT_INPUT_COST_PER_MTOK, DEFAULT_OUTPUT_COST_PER_MTOK
+
+
+def calculate_cost(
+    input_tokens: int, output_tokens: int, input_rate: float, output_rate: float
+) -> float:
+    """Return the estimated USD cost for the given token counts and rates."""
     return (
-        input_tokens / 1_000_000 * INPUT_COST_PER_MTOK
-        + output_tokens / 1_000_000 * OUTPUT_COST_PER_MTOK
+        input_tokens / 1_000_000 * input_rate
+        + output_tokens / 1_000_000 * output_rate
     )
 
 
@@ -84,6 +107,7 @@ def main() -> int:
 
     api_key = load_api_key()
     model = os.getenv("CLAUDE_MODEL", DEFAULT_MODEL)
+    input_rate, output_rate = get_pricing()
     client = anthropic.Anthropic(api_key=api_key)
 
     print(f"📡 Calling Claude ({model})...")
@@ -95,6 +119,10 @@ def main() -> int:
         )
     except anthropic.AuthenticationError:
         print("❌ Authentication failed — check CLAUDE_API_KEY.")
+        return 1
+    except anthropic.NotFoundError as exc:
+        print(f"❌ Model '{model}' not found or not available to this key: {exc.message}")
+        print("   Fix: set CLAUDE_MODEL in .env to a model your account can use.")
         return 1
     except anthropic.RateLimitError:
         print("⏳ Rate limited — wait a moment and retry.")
@@ -114,9 +142,12 @@ def main() -> int:
     print("\n✅ Response:")
     print_box(response_text)
 
+    # Authoritative source for which model served the request
+    print(f"\n🤖 Served by model: {message.model}")
+
     in_tok = message.usage.input_tokens
     out_tok = message.usage.output_tokens
-    cost = calculate_cost(in_tok, out_tok)
+    cost = calculate_cost(in_tok, out_tok, input_rate, output_rate)
 
     print("\n📊 Token usage:")
     print(f"   Input tokens : {in_tok:,}")
@@ -124,7 +155,7 @@ def main() -> int:
     print(f"   Total tokens : {in_tok + out_tok:,}")
     print(
         f"💰 Estimated cost: ${cost:.6f}  "
-        f"(${INPUT_COST_PER_MTOK}/M in + ${OUTPUT_COST_PER_MTOK}/M out)"
+        f"(${input_rate}/M in + ${output_rate}/M out)"
     )
     print("\n🎉 Claude integration is working!")
     return 0

@@ -161,3 +161,25 @@ def test_outputs_may_only_contain_outputs() -> None:
     main, _ = golden()
     errors = check_composition(load_blueprint(), main, 'variable "x" {\n}\n')
     assert any("outputs_tf may only contain" in e for e in errors)
+
+
+def test_key_vault_id_requires_literal_store_flag() -> None:
+    main, outputs = golden()
+    # Claude forgets the flag -> the secret would silently never be stored.
+    forgot = main.replace("  store_admin_password = true\n", "")
+    errors = check_composition(load_blueprint(), forgot, outputs)
+    assert any("store_admin_password = true" in e for e in errors)
+
+
+def test_store_flag_must_be_a_literal() -> None:
+    main, outputs = golden()
+    derived = main.replace("store_admin_password = true", "store_admin_password = module.kv.id != null")
+    errors = check_composition(load_blueprint(), derived, outputs)
+    assert any("literal" in e for e in errors)
+
+
+def test_store_flag_without_vault_is_rejected() -> None:
+    main, outputs = golden()
+    no_vault = main.replace("  key_vault_id         = module.kv.id\n", "")
+    errors = check_composition(load_blueprint(), no_vault, outputs)
+    assert any("requires key_vault_id" in e for e in errors)

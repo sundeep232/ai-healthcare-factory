@@ -51,10 +51,19 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
 }
 
 # Optionally store the generated admin password in Key Vault.
+# `count` must not depend on var.key_vault_id: that ID is usually unknown until
+# apply (it comes from another module), and Terraform can't plan an unknown count.
 resource "azurerm_key_vault_secret" "admin_password" {
-  count = var.key_vault_id == null ? 0 : 1
+  count = var.store_admin_password ? 1 : 0
 
   name         = "pg-admin-password"
   value        = random_password.admin.result
   key_vault_id = var.key_vault_id
+
+  lifecycle {
+    precondition {
+      condition     = var.key_vault_id != null
+      error_message = "store_admin_password = true requires key_vault_id."
+    }
+  }
 }

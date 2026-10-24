@@ -177,3 +177,10 @@ class TestPlanner:
         PlannerAgent(client, CapabilityCatalog.load()).plan(self.requirements())
         system = fake.calls[0]["system"]
         assert "postgresql_flexible" in system and "{{CATALOG}}" not in system
+
+
+def test_interpreter_prompt_uses_configured_default_region() -> None:
+    client = ClaudeClient(make_settings(), client=FakeAnthropic([]))
+    agent = InterpreterAgent(client, default_region="northeurope")
+    assert "region northeurope" in agent._system
+    assert "{{" not in agent._system

@@ -31,16 +31,17 @@ module "kv" {
 module "db" {
   source = "../../modules/postgresql_flexible"
 
-  name                = "${var.instance_slug}-db"
-  suffix              = local.suffix
-  resource_group_name = module.rg.name
-  location            = var.location
-  sku                 = "B_Standard_B1ms"
-  storage_mb          = 32768
-  pg_version          = "16"
-  database_name       = "claims"
-  key_vault_id        = module.kv.id
-  tags                = local.tags
+  name                 = "${var.instance_slug}-db"
+  suffix               = local.suffix
+  resource_group_name  = module.rg.name
+  location             = var.location
+  sku                  = "B_Standard_B1ms"
+  storage_mb           = 32768
+  pg_version           = "16"
+  database_name        = "claims"
+  key_vault_id         = module.kv.id
+  store_admin_password = true
+  tags                 = local.tags
 }
 
 module "api" {

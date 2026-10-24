@@ -35,7 +35,19 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-5-5"
     claude_max_tokens: int = Field(4096, ge=256, le=64_000)
 
+    # Region of the shared bootstrap resources (state, Key Vault, ACR, Cosmos).
     azure_location: str = "eastus2"
+    # Default region for demo instances. Separate because services can be restricted per
+    # region per subscription: here PostgreSQL Flexible Server is blocked in eastus2/eastus/
+    # westus2/westeurope but works in centralus, which also supports Static Web Apps.
+    demo_location: str = "centralus"
+    # Needed by M4 (Compose). Filled from bootstrap outputs by scripts/sync-env-from-bootstrap.ps1.
+    azure_subscription_id: str = ""
+    tfstate_storage_account: str = ""
+    tfstate_container: str = "tfstate"
+    tfstate_resource_group: str = "rg-factory-shared"
+    # Where the API keeps demo records (JSON files). Git-ignored.
+    data_dir: Path = PROJECT_ROOT / ".factory-data"
     environment: str = "development"
     log_level: str = "INFO"
 

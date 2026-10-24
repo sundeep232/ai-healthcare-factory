@@ -48,11 +48,12 @@ def main() -> int:
         print("❌ Provide an intent string or --file.")
         return 2
 
-    client = ClaudeClient(get_settings())
+    settings = get_settings()
+    client = ClaudeClient(settings)
 
     print("🧠 M1 Interpret...")
     try:
-        m1 = InterpreterAgent(client).interpret(intent)
+        m1 = InterpreterAgent(client, default_region=settings.demo_location).interpret(intent)
     except (StructuredOutputError, ValueError) as exc:
         print(f"❌ M1 failed: {exc}")
         for err in getattr(exc, "errors", []):

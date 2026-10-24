@@ -12,9 +12,9 @@ MAX_INTENT_CHARS = 4000
 class InterpreterAgent:
     """Turns a business user's description into validated Requirements."""
 
-    def __init__(self, client: ClaudeClient) -> None:
+    def __init__(self, client: ClaudeClient, default_region: str = "centralus") -> None:
         self._client = client
-        self._system = load_prompt("m1_interpret")
+        self._system = load_prompt("m1_interpret", DEFAULT_REGION=default_region)
 
     def interpret(self, intent: str) -> StructuredResult[Requirements]:
         """Interpret ``intent`` into Requirements.

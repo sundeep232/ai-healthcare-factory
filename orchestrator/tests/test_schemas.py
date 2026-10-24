@@ -45,7 +45,7 @@ class TestRequirements:
     def test_defaults_applied(self) -> None:
         req = Requirements.model_validate(base_requirements())
         assert req.data_scale.member_count == 1000
-        assert req.azure_region == "eastus2"
+        assert req.azure_region == "centralus"
         assert req.synthetic_data_only is True
 
     def test_claims_pulls_in_member_and_provider(self) -> None:

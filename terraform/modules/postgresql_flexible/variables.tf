@@ -59,9 +59,15 @@ variable "admin_login" {
 }
 
 variable "key_vault_id" {
-  description = "Optional Key Vault ID (module.<kv>.id). When set, the admin password is stored as secret 'pg-admin-password'."
+  description = "Key Vault ID (module.<kv>.id). Used only when store_admin_password is true."
   type        = string
   default     = null
+}
+
+variable "store_admin_password" {
+  description = "Store the generated admin password in Key Vault as secret 'pg-admin-password'. Requires key_vault_id. Must be a literal true/false, never derived from another module's output."
+  type        = bool
+  default     = false
 }
 
 variable "tags" {

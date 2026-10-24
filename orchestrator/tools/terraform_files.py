@@ -167,6 +167,27 @@ def check_composition(blueprint: Blueprint, main_tf: str, outputs_tf: str) -> li
                     f"references module.{dep} (use its outputs or add depends_on = [module.{dep}])"
                 )
 
+    # 3b. Plan-time rule: the secret flag must be a literal, and must accompany key_vault_id.
+    #     (`terraform validate` can't see this; only a real `plan` does.)
+    for res_id, res in expected.items():
+        block = modules.get(res_id)
+        if block is None or res.type != "postgresql_flexible":
+            continue
+        has_vault = re.search(r"^\s*key_vault_id\s*=", block, re.MULTILINE) is not None
+        flag = re.search(r"^\s*store_admin_password\s*=\s*(\S+)", block, re.MULTILINE)
+        if has_vault and not (flag and flag.group(1) == "true"):
+            errors.append(
+                f"module '{res_id}': when key_vault_id is set you must also set the literal "
+                "`store_admin_password = true`"
+            )
+        if flag and flag.group(1) not in {"true", "false"}:
+            errors.append(
+                f"module '{res_id}': store_admin_password must be the literal true or false, "
+                f"got {flag.group(1)!r}"
+            )
+        if flag and flag.group(1) == "true" and not has_vault:
+            errors.append(f"module '{res_id}': store_admin_password = true requires key_vault_id")
+
     # 4. Safety: no hard-coded subscription/tenant IDs, no secrets in root outputs.
     for fname, text in (("main_tf", main_tf), ("outputs_tf", outputs_tf)):
         if _GUID_RE.search(text):

@@ -60,7 +60,7 @@ class Requirements(BaseModel):
     domains: list[HealthcareDomain] = Field(min_length=1)
     data_scale: DataScale = Field(default_factory=DataScale)
     experience: Experience = Field(default_factory=Experience)
-    azure_region: str = Field("eastus2", min_length=3, max_length=40)
+    azure_region: str = Field("centralus", min_length=3, max_length=40)
     ttl_days: int = Field(14, ge=1, le=90, description="Days before the demo auto-expires.")
     # Hard guardrail: the platform never loads real PHI/PII.
     synthetic_data_only: Literal[True] = True

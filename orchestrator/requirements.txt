@@ -6,9 +6,9 @@ python-dotenv==1.0.1
 pydantic==2.9.2
 pydantic-settings==2.6.1
 
-# API (added in Step 5)
-# fastapi==0.115.0
-# uvicorn[standard]==0.30.6
+# API
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
 
 # Azure SDK (added in Step 2)
 # azure-identity==1.19.0

@@ -16,7 +16,7 @@
     "domains": ["claims", "member", "provider"],
     "data_scale": { "member_count": 5000, "history_months": 12 },
     "experience": { "web_ui": true, "api": true, "analytics_dashboard": true },
-    "azure_region": "eastus2",
+    "azure_region": "centralus",
     "ttl_days": 14,
     "synthetic_data_only": true,
     "assumptions": ["Defaulted to 12 months of claims history."],

@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     tfstate_storage_account: str = ""
     tfstate_container: str = "tfstate"
     tfstate_resource_group: str = "rg-factory-shared"
+    # M3b: public IPv4 of this machine, if auto-detection (api.ipify.org) is blocked.
+    loader_client_ip: str = ""
     # Where the API keeps demo records (JSON files). Git-ignored.
     data_dir: Path = PROJECT_ROOT / ".factory-data"
     environment: str = "development"

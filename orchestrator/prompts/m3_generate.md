@@ -9,6 +9,7 @@ These are generated for you in the same directory and are available to reference
 - `var.subscription_id`, `var.location`, `var.instance_slug`, `var.tags`
 - `local.suffix` (short unique string) and `local.tags` (merged tag map)
 - the `azurerm` and `random` providers, the backend, and versions
+- an output named `factory_connections` (database/Key Vault facts for the data loader). Never define it yourself.
 
 ## Hard rules
 1. `main_tf` contains ONLY `module` blocks. No `resource`, `data`, `provider`, `terraform`, `variable`, or `locals` blocks.

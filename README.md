@@ -20,7 +20,7 @@ AI platform that creates healthcare payer demo environments on Azure in minutes,
 
 ```
 M1 Interpret ? M2 Plan ? M3 Generate ? M4 Compose ? M3b Data ? M5 Certify ? M6 Publish
-                                                                                 ¦
+                                                                                 ï¿½
                                                           M7 Regenerate ?--------+
 ```
 
@@ -47,19 +47,19 @@ M1 Interpret ? M2 Plan ? M3 Generate ? M4 Compose ? M3b Data ? M5 Certify ? M6 P
 
 ```
 +----------+   +----------------+   +-------------------+
-¦ React UI ¦--?¦ FastAPI        ¦--?¦ Claude Sonnet 5.5 ¦
-¦          ¦   ¦ Orchestrator   ¦   ¦ + Capability Cat. ¦
+ï¿½ React UI ï¿½--?ï¿½ FastAPI        ï¿½--?ï¿½ Claude Sonnet 5.5 ï¿½
+ï¿½          ï¿½   ï¿½ Orchestrator   ï¿½   ï¿½ + Capability Cat. ï¿½
 +----------+   +----------------+   +-------------------+
-                       ¦
+                       ï¿½
         +--------------+---------------+
         ?              ?               ?
   +-----------+  +------------+  +-------------+
-  ¦ Terraform ¦  ¦ Data Agents¦  ¦ Blueprint & ¦
-  ¦ (azurerm4)¦  ¦ (5 domains)¦  ¦ Manifest    ¦
-  +-----------+  +------------+  ¦ Storage     ¦
+  ï¿½ Terraform ï¿½  ï¿½ Data Agentsï¿½  ï¿½ Blueprint & ï¿½
+  ï¿½ (azurerm4)ï¿½  ï¿½ (5 domains)ï¿½  ï¿½ Manifest    ï¿½
+  +-----------+  +------------+  ï¿½ Storage     ï¿½
         ?              ?         +-------------+
    +--------------------------+
-   ¦ Azure: per-demo instance ¦
+   ï¿½ Azure: per-demo instance ï¿½
    +--------------------------+
 ```
 
@@ -75,19 +75,19 @@ ai-healthcare-factory/
 +-- capability-catalog/     # RAG source for Claude
 +-- docs/                   # Architecture and design docs
 +-- orchestrator/           # Python/FastAPI backend
-¦   +-- agents/
-¦   ¦   +-- data_agents/    # Member, Provider, Claims, Auth, Care Mgmt
-¦   +-- prompts/
-¦   +-- routes/
-¦   +-- schemas/
-¦   +-- storage/
-¦   +-- tests/
-¦   +-- tools/
+ï¿½   +-- agents/
+ï¿½   ï¿½   +-- data_agents/    # Member, Provider, Claims, Auth, Care Mgmt
+ï¿½   +-- prompts/
+ï¿½   +-- routes/
+ï¿½   +-- schemas/
+ï¿½   +-- storage/
+ï¿½   +-- tests/
+ï¿½   +-- tools/
 +-- scripts/
 +-- terraform/
-¦   +-- instances/          # Generated per-demo (git-ignored)
-¦   +-- modules/
-¦   +-- templates/
+ï¿½   +-- instances/          # Generated per-demo (git-ignored)
+ï¿½   +-- modules/
+ï¿½   +-- templates/
 +-- ui/                     # React frontend
 ```
 
@@ -100,7 +100,7 @@ ai-healthcare-factory/
 | 3 | M1 Interpret + M2 Plan | ? Done |
 | 4 | M3 Generate (Terraform modules + composer) | ? Done |
 | 5 | M4 Compose + FastAPI routes | ? Done (apply not yet run end to end) |
-| 6 | M3b Data agents (5 domains) | ? Planned |
+| 6 | M3b Data agents (5 domains) | âœ… Done (live Azure seed not yet run end to end)
 | 7 | M5 Certify + M6 Publish + UI | ? Planned |
 | 8 | M7 Regenerate + hardening + demo | ? Planned |
 

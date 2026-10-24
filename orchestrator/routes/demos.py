@@ -126,6 +126,44 @@ def deploy(
     return demo
 
 
+class DataRequest(BaseModel):
+    seed: int | None = Field(
+        None, ge=0, le=2**32 - 1, description="Override the per-demo default seed (same seed = same data)."
+    )
+
+
+@router.post("/{demo_id}/data/preview")
+def preview_data(
+    demo_id: str, pipeline: PipelineDep, body: DataRequest | None = None,
+    sample: Annotated[int, Query(ge=1, le=50)] = 5,
+) -> dict[str, object]:
+    """M3b dry run: generate the dataset in memory and return counts + sample rows.
+
+    Touches no Azure resources, so it works before deploy. The same seed that previews
+    here is what /seed loads (unless the calendar day changes the history window).
+    """
+    try:
+        return pipeline.preview_data(demo_id, seed=body.seed if body else None, sample=sample)
+    except DemoNotFoundError as exc:
+        raise HTTPException(404, "demo not found") from exc
+    except InvalidTransitionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/{demo_id}/seed", status_code=202, response_model=Demo)
+def seed(
+    demo_id: str, background: BackgroundTasks, pipeline: PipelineDep, body: DataRequest | None = None
+) -> Demo:
+    """M3b: load synthetic data into the deployed databases, in the background.
+
+    Replaces any data from an earlier seed. Opens a temporary firewall rule for this
+    machine's IP on PostgreSQL and removes it afterwards. Poll GET /api/demos/{id}.
+    """
+    demo = _guard(lambda: pipeline.start_seed(demo_id))
+    background.add_task(pipeline.run_seed, demo_id, body.seed if body else None)
+    return demo
+
+
 @router.post("/{demo_id}/destroy", status_code=202, response_model=Demo)
 def destroy(
     demo_id: str, body: ConfirmRequest, background: BackgroundTasks, pipeline: PipelineDep

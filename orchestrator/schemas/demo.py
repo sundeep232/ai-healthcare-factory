@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date as date_type
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -24,13 +25,14 @@ class DemoStatus(str, Enum):
     GENERATED = "generated"  # M3 done: Terraform instance dir exists and validates
     DEPLOYING = "deploying"  # M4 apply running
     DEPLOYED = "deployed"  # M4 done: resources live
+    SEEDING = "seeding"  # M3b loading synthetic data into the live databases
     DESTROYING = "destroying"
     DESTROYED = "destroyed"
     FAILED = "failed"  # last operation failed; see `error` and `failed_stage`
 
     @property
     def is_busy(self) -> bool:
-        return self in (DemoStatus.DEPLOYING, DemoStatus.DESTROYING)
+        return self in (DemoStatus.DEPLOYING, DemoStatus.SEEDING, DemoStatus.DESTROYING)
 
 
 class PlanSummary(BaseModel):
@@ -45,6 +47,26 @@ class PlanSummary(BaseModel):
     @property
     def has_deletions(self) -> bool:
         return self.destroy > 0
+
+
+class SeedTarget(BaseModel):
+    """Rows loaded into one database resource."""
+
+    resource_id: str
+    kind: Literal["postgres", "cosmos"]
+    host: str
+    tables: dict[str, int] = Field(description="Verified row/item count per table.")
+
+
+class SeedSummary(BaseModel):
+    """Outcome of an M3b data load (no secrets, no row contents)."""
+
+    seed: int
+    as_of: date_type = Field(description="'Today' used for the history window.")
+    targets: list[SeedTarget]
+    total_rows: int
+    warnings: list[str] = Field(default_factory=list)
+    seeded_at: datetime = Field(default_factory=_now)
 
 
 class DemoEvent(BaseModel):
@@ -66,6 +88,7 @@ class Demo(BaseModel):
     instance_dir: str | None = Field(None, description="Instance folder name under terraform/instances.")
     plan: PlanSummary | None = None
     outputs: dict[str, Any] = Field(default_factory=dict)
+    data: SeedSummary | None = Field(None, description="Last successful M3b data load.")
     failed_stage: str | None = None
     error: str | None = None
     events: list[DemoEvent] = Field(default_factory=list)

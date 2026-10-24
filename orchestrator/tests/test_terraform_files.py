@@ -11,10 +11,12 @@ from orchestrator.config import MODULES_DIR, TEMPLATES_DIR
 from orchestrator.schemas import Blueprint
 from orchestrator.tools.catalog import CapabilityCatalog
 from orchestrator.tools.terraform_files import (
+    CONNECTIONS_OUTPUT,
     check_composition,
     instance_id,
     module_interfaces,
     parse_modules,
+    render_connections,
     render_static_files,
 )
 
@@ -64,11 +66,52 @@ def test_module_interfaces_include_used_modules_only() -> None:
 def test_render_static_files() -> None:
     bp = load_blueprint()
     files = render_static_files(bp)
-    assert set(files) == {"versions.tf", "providers.tf", "backend.tf", "variables.tf", "base.tf"}
+    assert set(files) == {
+        "versions.tf", "providers.tf", "backend.tf", "variables.tf", "base.tf", "connections.tf",
+    }  # fmt: skip
     assert bp.blueprint_id in files["base.tf"]
     assert f'default     = "{bp.instance_slug}"' in files["variables.tf"]
     assert f"instances/{instance_id(bp)}.tfstate" in files["backend.tf"]
     assert all("{{" not in text for text in files.values())
+
+
+def test_connections_output_covers_every_database_and_the_vault() -> None:
+    bp = load_blueprint()
+    text = render_connections(bp)
+    assert f'output "{CONNECTIONS_OUTPUT}"' in text
+    for res in bp.resources:
+        if res.type in {"postgresql_flexible", "cosmos_db"}:
+            assert f"      {res.id} = {{" in text
+    kv = next(r for r in bp.resources if r.type == "key_vault")
+    assert f"module.{kv.id}.name" in text
+    assert "module.db.admin_login" in text and "module.db.fqdn" in text
+
+
+def test_connections_output_never_exposes_secrets() -> None:
+    text = render_connections(load_blueprint())
+    for needle in ("password", "primary_key", "secondary_key", "connection_string", "access_key"):
+        assert needle not in text.replace("No secrets", "")
+
+
+def test_connections_output_handles_blueprints_without_databases() -> None:
+    bp = load_blueprint()
+    bp = bp.model_copy(
+        update={
+            "resources": [r for r in bp.resources if r.type == "resource_group"],
+            "data_plan": [],
+        }
+    )
+    text = render_connections(bp)
+    assert "postgres       = {}" in text and "cosmos         = {}" in text
+    assert "key_vault      = null" in text
+
+
+def test_claude_may_not_redefine_the_connections_output() -> None:
+    bp = load_blueprint()
+    main, outputs = golden()
+    outputs += f'\noutput "{CONNECTIONS_OUTPUT}" {{\n  value = "x"\n}}\n'
+    errors = check_composition(bp, main, outputs)
+    assert any(CONNECTIONS_OUTPUT in e for e in errors)
 
 
 def test_instance_id_includes_slug_and_version() -> None:

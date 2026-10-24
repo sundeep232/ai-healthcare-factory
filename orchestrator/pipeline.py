@@ -7,6 +7,7 @@ Terraform plan before anything that costs money (deploy) is started.
     generate (M3)     -> GENERATED
     plan     (M4 dry) -> GENERATED, plan summary stored
     deploy   (M4)     -> DEPLOYING -> DEPLOYED | FAILED      (background)
+    seed     (M3b)    -> SEEDING   -> DEPLOYED | FAILED      (background)
     destroy  (M4)     -> DESTROYING -> DESTROYED | FAILED    (background)
 """
 
@@ -16,6 +17,8 @@ import logging
 from typing import Any
 
 from orchestrator.agents.composer import ComposeError
+from orchestrator.agents.data_agents import build_context, generate_dataset
+from orchestrator.agents.seeder import SeedError
 from orchestrator.schemas.demo import Demo, DemoStatus
 from orchestrator.storage import DemoStore, InvalidTransitionError, update
 
@@ -25,20 +28,38 @@ logger = logging.getLogger(__name__)
 _CAN_GENERATE = (DemoStatus.PLANNED, DemoStatus.GENERATED, DemoStatus.FAILED)
 _CAN_PLAN = (DemoStatus.GENERATED, DemoStatus.FAILED)
 _CAN_DEPLOY = (DemoStatus.GENERATED, DemoStatus.FAILED)
+_CAN_SEED = (DemoStatus.DEPLOYED, DemoStatus.FAILED)
 _CAN_DESTROY = (DemoStatus.DEPLOYED, DemoStatus.FAILED)
+
+
+def default_seed(demo_id: str) -> int:
+    """Stable per-demo seed, so preview and seed agree unless the caller overrides it."""
+    return int(demo_id.replace("-", "")[:8], 16)
+
+
+def _seed_for(demo_id: str, override: int | None) -> int:
+    return default_seed(demo_id) if override is None else override
 
 
 class Pipeline:
     """Coordinates the agents and persists progress in the store."""
 
     def __init__(
-        self, store: DemoStore, *, interpreter: Any, planner: Any, generator: Any, composer: Any
+        self,
+        store: DemoStore,
+        *,
+        interpreter: Any,
+        planner: Any,
+        generator: Any,
+        composer: Any,
+        seeder: Any = None,
     ) -> None:
         self.store = store
         self._interpreter = interpreter
         self._planner = planner
         self._generator = generator
         self._composer = composer
+        self._seeder = seeder
 
     # -- M1 + M2 -----------------------------------------------------------
 
@@ -111,6 +132,61 @@ class Pipeline:
 
         update(self.store, demo_id, done)
 
+    # -- M3b ---------------------------------------------------------------
+
+    def preview_data(
+        self, demo_id: str, *, seed: int | None = None, sample: int = 5
+    ) -> dict[str, Any]:
+        """Generate the dataset in memory (no Azure) and return counts + sample rows."""
+        demo = self.store.get(demo_id)
+        if demo.blueprint is None:
+            raise InvalidTransitionError("demo has no blueprint yet")
+        ctx = build_context(demo.blueprint, seed=_seed_for(demo_id, seed))
+        dataset = generate_dataset(ctx)
+        return {
+            "seed": ctx.seed,
+            "as_of": ctx.today,
+            "targets": {e.domain.value: e.target_resource_id for e in demo.blueprint.data_plan},
+            "counts": dataset.counts(),
+            "samples": {name: rows[:sample] for name, rows in dataset.tables.items()},
+        }
+
+    def start_seed(self, demo_id: str) -> Demo:
+        """Atomically claim a deployed demo for data loading."""
+        demo = self._require_state(demo_id, _CAN_SEED, need_blueprint=True)
+        if not demo.outputs:
+            raise InvalidTransitionError("demo is not deployed yet; deploy it before seeding")
+        self.store.begin(demo_id, _CAN_SEED, DemoStatus.SEEDING)
+        return update(self.store, demo_id, lambda d: d.log("seed", "data load started"))
+
+    def run_seed(self, demo_id: str, seed: int | None = None) -> None:
+        """Background worker: generate and load synthetic data. Never raises."""
+        demo = self.store.get(demo_id)
+        assert demo.blueprint is not None
+        try:
+            if self._seeder is None:
+                raise SeedError("config", "no seeder configured")
+            summary = self._seeder.seed(
+                demo.blueprint, demo.outputs, seed=_seed_for(demo_id, seed)
+            )
+        except SeedError as exc:
+            self._fail(demo_id, "data", f"{exc.stage}: {exc.detail}")
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("seed crashed for %s", demo_id)
+            self._fail(demo_id, "data", f"unexpected error: {type(exc).__name__}: {exc}")
+            return
+
+        def done(d: Demo) -> None:
+            d.status = DemoStatus.DEPLOYED
+            d.data = summary
+            d.error = d.failed_stage = None
+            d.log("seed", f"loaded {summary.total_rows} rows (seed {summary.seed})")
+            for warning in summary.warnings:
+                d.log("seed", f"warning: {warning}")
+
+        update(self.store, demo_id, done)
+
     def start_destroy(self, demo_id: str) -> Demo:
         self._require_state(demo_id, _CAN_DESTROY, need_instance=True)
         self.store.begin(demo_id, _CAN_DESTROY, DemoStatus.DESTROYING)
@@ -132,6 +208,7 @@ class Pipeline:
         def done(d: Demo) -> None:
             d.status = DemoStatus.DESTROYED
             d.outputs = {}
+            d.data = None  # the databases are gone
             d.log("destroy", "all resources destroyed")
 
         update(self.store, demo_id, done)

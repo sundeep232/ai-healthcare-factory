@@ -16,10 +16,12 @@ from fastapi import FastAPI
 
 from orchestrator.agents import ClaudeClient, GeneratorAgent, InterpreterAgent, PlannerAgent
 from orchestrator.agents.composer import ComposerAgent
+from orchestrator.agents.seeder import SeederAgent
 from orchestrator.config import Settings, get_settings
 from orchestrator.pipeline import Pipeline
 from orchestrator.routes import demos
 from orchestrator.storage import DemoStore, FileDemoStore
+from orchestrator.tools.azure_access import AzureAccess
 
 
 def build_pipeline(settings: Settings, store: DemoStore | None = None) -> Pipeline:
@@ -31,6 +33,9 @@ def build_pipeline(settings: Settings, store: DemoStore | None = None) -> Pipeli
         planner=PlannerAgent(client),
         generator=GeneratorAgent(client),
         composer=ComposerAgent(settings),
+        seeder=SeederAgent(
+            AzureAccess(settings.azure_subscription_id, client_ip=settings.loader_client_ip)
+        ),
     )
 
 
@@ -38,7 +43,7 @@ def create_app(pipeline: Pipeline | Callable[[], Pipeline] | None = None) -> Fas
     """Create the app. Pass a ``pipeline`` (or factory) in tests to avoid real agents."""
     app = FastAPI(
         title="AI-Driven Healthcare Platform Factory",
-        version="0.5.0",
+        version="0.6.0",
         description="Creates Azure demo environments for healthcare payer use cases.",
     )
     logging.basicConfig(level=get_settings().log_level if pipeline is None else logging.INFO)

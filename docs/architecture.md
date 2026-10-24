@@ -56,7 +56,11 @@ Intent → M1 → M2 → M3 → M4 → M3b → M5 → M6
 
 **M3 design.** Claude never writes raw `resource` blocks. Each catalog capability has a reviewed module in `terraform/modules/<type>/`. Claude writes only `main.tf` (one `module` block per blueprint resource) and `outputs.tf`. Providers, backend, variables, naming suffix and tags come from `terraform/templates/`. Output is accepted only if it passes (1) composition rules (`orchestrator/tools/terraform_files.py`: one module per resource, correct source, dependencies visible, no GUIDs, no secret outputs) and (2) `terraform init -backend=false` + `terraform validate`. Failures go back to Claude as feedback (3 attempts). M3 never touches Azure; the state key is `instances/<slug>-<id8>-v<version>.tfstate`, with backend details supplied at `init` time by M4.
 
-**Data agents (M3b):** Member, Provider, Claims, Authorization, Care Management.
+**M3b design (data agents).** Five domain generators in `orchestrator/agents/data_agents/` (Member, Provider, Claims, Authorization, Care Management) produce deterministic, referentially intact synthetic data. They are plain seeded Python, with no LLM calls, so runs are free and reproducible, and no real PHI can appear (`SYN-` ids, invalid `9XXXXXXXXX` NPIs, `@example.invalid` emails, `555-01XX` phones). Each domain has its own RNG stream (`"{seed}:{domain}"`), so enabling or disabling a domain never changes the others. `schema.py` is the single source of truth for Postgres DDL, Cosmos container mapping and tests.
+
+Delivery is done by `SeederAgent` using connection details from the deterministic `factory_connections` output (rendered into every instance as `connections.tf`; Claude may not redefine it). Postgres admin password is read from the instance Key Vault and Cosmos keys via ARM, both with the orchestrator's `DefaultAzureCredential`. A temporary firewall rule `factory-loader-<ip>` is added for the load and always removed afterwards. Postgres loads run in one transaction (drop/create/`COPY`/index) so a failed reseed leaves previous data intact; Cosmos loads are idempotent upserts. Reference throughput: ~330k rows (250k claims) generate in ~5s and load into Postgres in ~5s locally.
+
+API: `POST /api/demos/{id}/data/preview` (in-memory dry run, samples and counts) and `POST /api/demos/{id}/seed` (202, background, status `SEEDING`).
 
 ## 4. Technology Decisions
 

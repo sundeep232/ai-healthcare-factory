@@ -37,8 +37,8 @@ def test_generate_writes_instance(tmp_path: Path) -> None:
     names = {p.name for p in result.directory.iterdir()}
     assert names == {
         "main.tf", "outputs.tf", "versions.tf", "providers.tf",
-        "backend.tf", "variables.tf", "base.tf", "blueprint.json",
-    }  # fmt: skip
+            "backend.tf", "variables.tf", "base.tf", "connections.tf", "blueprint.json",
+        }  # fmt: skip
     saved = json.loads((result.directory / "blueprint.json").read_text(encoding="utf-8"))
     assert saved["blueprint_id"] == bp.blueprint_id
     # The prompt carries real module interfaces and the blueprint, but not the raw requirements.

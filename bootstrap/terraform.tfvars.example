@@ -1,9 +1,0 @@
-# Copy to terraform.tfvars (git-ignored) and fill in.
-subscription_id = "00000000-0000-0000-0000-000000000000"
-
-# Optional overrides (defaults shown)
-# location               = "eastus2"
-# resource_group_name    = "rg-factory-shared"
-# name_prefix            = "factory"
-# tfstate_container_name = "tfstate"
-# cosmos_database_name   = "factory"

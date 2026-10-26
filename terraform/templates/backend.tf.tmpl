@@ -1,7 +1,0 @@
-# Partial backend config. The storage account / container / resource group of the
-# shared bootstrap are supplied at `terraform init` time via -backend-config (M4).
-terraform {
-  backend "azurerm" {
-    key = "instances/{{INSTANCE_ID}}.tfstate"
-  }
-}

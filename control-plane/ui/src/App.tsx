@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   authToken,
   clearToken,
@@ -88,26 +88,53 @@ export function App() {
     setSelected(await fetchEnvironment(id));
   }
 
+  useEffect(() => {
+    if (!selected || selected.status !== "Deploying") return;
+    const id = selected.id;
+    const timer = window.setInterval(() => {
+      fetchEnvironment(id)
+        .then((next) => {
+          setSelected((current) => (current?.id === id ? next : current));
+          if (next.status !== "Deploying") {
+            fetchEnvironments().then(setEnvironments).catch(() => undefined);
+          }
+        })
+        .catch(() => {
+          if (!authToken()) setSignedIn(false);
+        });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [selected?.id, selected?.status]);
+
   async function onCreate(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    await createEnvironment({ customerId, templateId, name: name || "New demo" });
-    setName("");
-    await loadLists();
-    setView("environments");
+    try {
+      const created = await createEnvironment({ customerId, templateId, name: name || "New demo" });
+      setName("");
+      await loadLists();
+      setSelected(created);
+      setView("environments");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the demo");
+    }
   }
 
   async function onCopy(environment: EnvironmentSummary) {
     setError(null);
     if (!environment.templateId) return;
-    await createEnvironment({
-      customerId: environment.customerId,
-      templateId: environment.templateId,
-      name: `${environment.name} copy`,
-    });
-    await loadLists();
-    setView("environments");
-    setSelected(null);
+    try {
+      const created = await createEnvironment({
+        customerId: environment.customerId,
+        templateId: environment.templateId,
+        name: `${environment.name} copy`,
+      });
+      await loadLists();
+      setSelected(created);
+      setView("environments");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not copy the demo");
+    }
   }
 
   async function onDelete(environment: EnvironmentSummary) {
@@ -167,7 +194,7 @@ export function App() {
           ) : view === "create" ? (
             <>
               <div className="top"><h2>Create Demo</h2></div>
-              <p className="note">Registers the demo in the control plane. The tenant resource group is created later.</p>
+              <p className="note">Starts a GitHub Actions workflow that creates this demo's resource group, database, and portal site. The deploy log opens when the workflow is queued.</p>
               <form className="form" onSubmit={onCreate}>
                 <label>
                   Name
@@ -348,6 +375,11 @@ function EnvironmentTable({
 function Detail({ item, onBack }: { item: EnvironmentDetail; onBack: () => void }) {
   const cost = item.usage.reduce((sum, row) => sum + row.cost, 0);
   const status = shownStatus(item);
+  const latest = item.deployments[0];
+  const logRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [latest?.log]);
   return (
     <>
       <button className="back" onClick={onBack}>Back</button>
@@ -361,6 +393,9 @@ function Detail({ item, onBack }: { item: EnvironmentDetail; onBack: () => void 
         {item.deployments.map((log) => (
           <p key={log.id} className="meta">{log.action} · {log.status}. {log.message}</p>
         ))}
+        {(item.slug || latest?.log) && (
+          <pre className="deploy-log" ref={logRef}>{latest?.log || "Waiting for the workflow log."}</pre>
+        )}
       </section>
       <section className="panel">
         <h3>Conversations</h3>

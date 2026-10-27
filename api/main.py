@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db import execute, query
+from github_actions import GitHubError, dispatch_deploy, fetch_log, find_run, get_run
 
 app = FastAPI(title="Demo Factory API")
 TOKEN_TTL_SECONDS = 12 * 60 * 60
@@ -193,11 +195,98 @@ def _environment_summary(row: dict) -> dict:
     }
 
 
-@app.get("/api/environments/{environment_id}")
-def environment_detail(environment_id: str):
+def _slug(name: str, environment_id: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:32] or "demo"
+    return f"{base}-{environment_id.replace('-', '')[:4]}"
+
+
+def _sync_deploy(environment_id: str) -> None:
+    envs = query(
+        "SELECT Slug, Status FROM dbo.Environment WHERE EnvironmentId = %s",
+        (environment_id,),
+    )
+    if not envs or not envs[0]["Slug"] or envs[0]["Status"] != "Deploying":
+        return
     rows = query(
         """
-        SELECT e.EnvironmentId, e.Name, e.Status, e.ExpiresAt, e.CreatedAt,
+        SELECT DeploymentLogId, Status, WorkflowRunId, LogText
+        FROM dbo.DeploymentLog
+        WHERE EnvironmentId = %s AND Action = N'Deploy'
+        ORDER BY StartedAt DESC
+        """,
+        (environment_id,),
+    )
+    if not rows or rows[0]["Status"] not in ("Running", "Queued"):
+        return
+    row = rows[0]
+    log_id = str(row["DeploymentLogId"])
+    run_id = row["WorkflowRunId"]
+    try:
+        if not run_id:
+            run_id = find_run(environment_id)
+            if not run_id:
+                waiting = "Waiting for GitHub Actions to start."
+                execute(
+                    """
+                    UPDATE dbo.DeploymentLog
+                    SET Message = %s, LogText = %s
+                    WHERE DeploymentLogId = %s
+                    """,
+                    (waiting, waiting, log_id),
+                )
+                return
+            execute(
+                """
+                UPDATE dbo.DeploymentLog
+                SET WorkflowRunId = %s, Message = %s
+                WHERE DeploymentLogId = %s
+                """,
+                (run_id, "GitHub Actions is applying Terraform.", log_id),
+            )
+        run = get_run(int(run_id))
+        log_text = fetch_log(int(run_id))
+        if run.get("status") == "completed":
+            ok = run.get("conclusion") == "success"
+            execute(
+                """
+                UPDATE dbo.DeploymentLog
+                SET Status = %s, Message = %s, LogText = %s, FinishedAt = SYSUTCDATETIME()
+                WHERE DeploymentLogId = %s
+                """,
+                (
+                    "Succeeded" if ok else "Failed",
+                    "Terraform apply finished." if ok else f"Terraform apply {run.get('conclusion') or 'failed'}.",
+                    log_text,
+                    log_id,
+                ),
+            )
+            execute(
+                "UPDATE dbo.Environment SET Status = %s WHERE EnvironmentId = %s",
+                ("Active" if ok else "Failed", environment_id),
+            )
+            return
+        if log_text != (row["LogText"] or ""):
+            execute(
+                """
+                UPDATE dbo.DeploymentLog
+                SET Status = N'Running', Message = %s, LogText = %s
+                WHERE DeploymentLogId = %s
+                """,
+                ("Terraform is running.", log_text, log_id),
+            )
+    except GitHubError as exc:
+        execute(
+            "UPDATE dbo.DeploymentLog SET Message = %s WHERE DeploymentLogId = %s",
+            (str(exc)[:900], log_id),
+        )
+
+
+@app.get("/api/environments/{environment_id}")
+def environment_detail(environment_id: str):
+    _sync_deploy(environment_id)
+    rows = query(
+        """
+        SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt,
                c.CustomerId, c.Name AS CustomerName, c.TenantId,
                b.PortalName, b.PrimaryColor, b.SecondaryColor,
                t.TemplateId, t.Name AS TemplateName
@@ -212,6 +301,7 @@ def environment_detail(environment_id: str):
     if not rows:
         raise HTTPException(status_code=404, detail="Environment not found")
     item = _environment_summary(rows[0])
+    item["slug"] = rows[0]["Slug"]
     item["secondaryColor"] = rows[0]["SecondaryColor"]
     item["deployments"] = [
         {
@@ -219,12 +309,13 @@ def environment_detail(environment_id: str):
             "action": row["Action"],
             "status": row["Status"],
             "message": row["Message"],
+            "log": row["LogText"] or "",
             "startedAt": _iso(row["StartedAt"]),
             "finishedAt": _iso(row["FinishedAt"]),
         }
         for row in query(
             """
-            SELECT DeploymentLogId, Action, Status, Message, StartedAt, FinishedAt
+            SELECT DeploymentLogId, Action, Status, Message, LogText, StartedAt, FinishedAt
             FROM dbo.DeploymentLog
             WHERE EnvironmentId = %s
             ORDER BY StartedAt DESC
@@ -285,25 +376,41 @@ def create_environment(body: NewEnvironment):
 
     environment_id = str(uuid.uuid4())
     log_id = str(uuid.uuid4())
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    slug = _slug(name, environment_id)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     execute(
         """
         INSERT INTO dbo.Environment
-            (EnvironmentId, CustomerId, TemplateId, Name, Status, ExpiresAt, CreatedAt)
-        VALUES (%s, %s, %s, %s, N'Deploying', DATEADD(day, 30, SYSUTCDATETIME()), %s)
+            (EnvironmentId, CustomerId, TemplateId, Name, Slug, Status, ExpiresAt, CreatedAt)
+        VALUES (%s, %s, %s, %s, %s, N'Deploying', DATEADD(day, 30, SYSUTCDATETIME()), %s)
         """,
-        (environment_id, body.customerId, body.templateId, body.name.strip(), now),
+        (environment_id, body.customerId, body.templateId, name, slug, now),
     )
+    try:
+        dispatch_deploy(slug, name, environment_id)
+        status = "Running"
+        message = "GitHub Actions workflow queued."
+        environment_status = "Deploying"
+    except GitHubError as exc:
+        status = "Failed"
+        message = str(exc)[:900]
+        environment_status = "Failed"
     execute(
         """
         INSERT INTO dbo.DeploymentLog
-            (DeploymentLogId, EnvironmentId, Action, Status, Message, StartedAt, FinishedAt)
-        VALUES (%s, %s, N'Deploy', N'Running',
-                N'Environment registered. Tenant resource group is created later from the portal.',
-                %s, NULL)
+            (DeploymentLogId, EnvironmentId, Action, Status, Message, LogText, StartedAt, FinishedAt)
+        VALUES (%s, %s, N'Deploy', %s, %s, %s, %s, CASE WHEN %s = N'Failed' THEN %s ELSE NULL END)
         """,
-        (log_id, environment_id, now),
+        (log_id, environment_id, status, message, message, now, status, now),
     )
+    if environment_status == "Failed":
+        execute(
+            "UPDATE dbo.Environment SET Status = N'Failed' WHERE EnvironmentId = %s",
+            (environment_id,),
+        )
     return environment_detail(environment_id)
 
 

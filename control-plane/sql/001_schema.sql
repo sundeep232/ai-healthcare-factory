@@ -61,6 +61,7 @@ CREATE TABLE dbo.Environment (
     CustomerId    uniqueidentifier NOT NULL CONSTRAINT FK_Environment_Customer REFERENCES dbo.Customer (CustomerId),
     TemplateId    uniqueidentifier NULL CONSTRAINT FK_Environment_Template REFERENCES dbo.Template (TemplateId),
     Name          nvarchar(200)    NOT NULL,
+    Slug          nvarchar(63)     NULL,
     Status        nvarchar(32)     NOT NULL,
     ExpiresAt     datetime2(0)     NULL,
     CreatedAt     datetime2(0)     NOT NULL
@@ -73,6 +74,8 @@ CREATE TABLE dbo.DeploymentLog (
     Action          nvarchar(32)     NOT NULL,
     Status          nvarchar(32)     NOT NULL,
     Message         nvarchar(1000)   NULL,
+    WorkflowRunId   bigint           NULL,
+    LogText         nvarchar(max)    NULL,
     StartedAt       datetime2(0)     NOT NULL,
     FinishedAt      datetime2(0)     NULL
 );

@@ -39,12 +39,14 @@ export type EnvironmentSummary = {
 };
 
 export type EnvironmentDetail = EnvironmentSummary & {
+  slug: string | null;
   secondaryColor: string | null;
   deployments: {
     id: string;
     action: string;
     status: string;
     message: string | null;
+    log: string;
     startedAt: string;
     finishedAt: string | null;
   }[];

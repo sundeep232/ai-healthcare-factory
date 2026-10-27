@@ -140,7 +140,21 @@ th.right, td.right { text-align: right; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #8b97a8; }
 .dot.ready { background: #22a34a; }
 .dot.deploying { background: #3b6cf5; }
-.dot.expired { background: #e23d3d; }
+.dot.expired, .dot.failed { background: #e23d3d; }
+.deploy-log {
+  margin: 12px 0 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f4f7fb;
+  color: #243044;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .actions { display: flex; justify-content: flex-end; gap: 4px; }
 .icon {

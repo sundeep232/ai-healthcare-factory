@@ -1,0 +1,70 @@
+name: Deploy tenant
+
+run-name: Deploy ${{ inputs.environment_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Azure-safe demo name
+        required: true
+        type: string
+      display_name:
+        description: Demo name from the portal
+        required: true
+        type: string
+      environment_id:
+        description: Control-plane environment id
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Apply tenant resources
+        working-directory: tenants/stack
+        env:
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TF_IN_AUTOMATION: "true"
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_slug: ${{ inputs.slug }}
+          TF_VAR_location: centralus
+          TF_VAR_environment_id: ${{ inputs.environment_id }}
+          TF_VAR_display_name: ${{ inputs.display_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TF_VAR_slug" =~ ^[a-z0-9-]{3,40}$ ]]; then
+            echo "Slug is invalid"
+            exit 1
+          fi
+          if [[ ! "$TF_VAR_environment_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            echo "Environment id is invalid"
+            exit 1
+          fi
+          terraform init -input=false \
+            -backend-config="resource_group_name=rg-ahf-tfstate" \
+            -backend-config="storage_account_name=stahftf4jqp3v" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=tenants/${TF_VAR_slug}.tfstate" \
+            -backend-config="use_azuread_auth=true"
+          terraform apply -input=false -auto-approve

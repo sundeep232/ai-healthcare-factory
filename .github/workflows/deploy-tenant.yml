@@ -66,5 +66,6 @@ jobs:
             -backend-config="storage_account_name=stahftf4jqp3v" \
             -backend-config="container_name=tfstate" \
             -backend-config="key=tenants/${TF_VAR_slug}.tfstate" \
-            -backend-config="use_azuread_auth=true"
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="use_oidc=true"
           terraform apply -input=false -auto-approve

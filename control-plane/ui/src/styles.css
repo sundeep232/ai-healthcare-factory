@@ -141,6 +141,8 @@ th.right, td.right { text-align: right; }
 .dot.ready { background: #22a34a; }
 .dot.deploying { background: #3b6cf5; }
 .dot.expired, .dot.failed { background: #e23d3d; }
+.dot.destroying { background: #d97706; }
+.dot.destroyed { background: #8b97a8; }
 .deploy-log {
   margin: 12px 0 0;
   max-height: 360px;

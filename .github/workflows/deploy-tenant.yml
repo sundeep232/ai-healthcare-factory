@@ -1,6 +1,6 @@
 name: Deploy tenant
 
-run-name: Deploy ${{ inputs.environment_id }}
+run-name: ${{ inputs.action == 'destroy' && format('Destroy {0}', inputs.environment_id) || format('Deploy {0}', inputs.environment_id) }}
 
 on:
   workflow_dispatch:
@@ -17,6 +17,14 @@ on:
         description: Control-plane environment id
         required: true
         type: string
+      action:
+        description: apply or destroy
+        required: true
+        type: choice
+        default: apply
+        options:
+          - apply
+          - destroy
 
 permissions:
   id-token: write
@@ -38,7 +46,7 @@ jobs:
         with:
           terraform_version: 1.9.8
 
-      - name: Apply tenant resources
+      - name: Terraform
         working-directory: tenants/stack
         env:
           ARM_USE_OIDC: "true"
@@ -46,6 +54,7 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           TF_IN_AUTOMATION: "true"
+          TF_ACTION: ${{ inputs.action }}
           TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           TF_VAR_slug: ${{ inputs.slug }}
           TF_VAR_location: centralus
@@ -53,6 +62,10 @@ jobs:
           TF_VAR_display_name: ${{ inputs.display_name }}
         run: |
           set -euo pipefail
+          if [[ "$TF_ACTION" != "apply" && "$TF_ACTION" != "destroy" ]]; then
+            echo "Action is invalid"
+            exit 1
+          fi
           if [[ ! "$TF_VAR_slug" =~ ^[a-z0-9-]{3,40}$ ]]; then
             echo "Slug is invalid"
             exit 1
@@ -61,6 +74,7 @@ jobs:
             echo "Environment id is invalid"
             exit 1
           fi
+          echo "Terraform ${TF_ACTION}"
           terraform init -input=false \
             -backend-config="resource_group_name=rg-ahf-tfstate" \
             -backend-config="storage_account_name=stahftf4jqp3v" \
@@ -68,4 +82,4 @@ jobs:
             -backend-config="key=tenants/${TF_VAR_slug}.tfstate" \
             -backend-config="use_azuread_auth=true" \
             -backend-config="use_oidc=true"
-          terraform apply -input=false -auto-approve
+          terraform "$TF_ACTION" -input=false -auto-approve

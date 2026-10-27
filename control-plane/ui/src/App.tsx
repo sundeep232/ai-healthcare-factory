@@ -33,6 +33,7 @@ function customerLabel(name: string) {
 }
 
 function shownStatus(environment: { status: string; expiresAt: string | null }) {
+  if (environment.status === "Destroying" || environment.status === "Destroyed") return environment.status;
   const expired = environment.expiresAt && new Date(environment.expiresAt) < new Date() && environment.status !== "Deploying";
   if (expired) return "Expired";
   if (environment.status === "Active") return "Ready";
@@ -89,13 +90,13 @@ export function App() {
   }
 
   useEffect(() => {
-    if (!selected || selected.status !== "Deploying") return;
+    if (!selected || (selected.status !== "Deploying" && selected.status !== "Destroying")) return;
     const id = selected.id;
     const timer = window.setInterval(() => {
       fetchEnvironment(id)
         .then((next) => {
           setSelected((current) => (current?.id === id ? next : current));
-          if (next.status !== "Deploying") {
+          if (next.status !== "Deploying" && next.status !== "Destroying") {
             fetchEnvironments().then(setEnvironments).catch(() => undefined);
           }
         })
@@ -109,8 +110,10 @@ export function App() {
   async function onCreate(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    const demoName = name || "New demo";
+    if (!window.confirm(`Create the Azure resource group for ${demoName}?`)) return;
     try {
-      const created = await createEnvironment({ customerId, templateId, name: name || "New demo" });
+      const created = await createEnvironment({ customerId, templateId, name: demoName });
       setName("");
       await loadLists();
       setSelected(created);
@@ -123,6 +126,7 @@ export function App() {
   async function onCopy(environment: EnvironmentSummary) {
     setError(null);
     if (!environment.templateId) return;
+    if (!window.confirm(`Create a new Azure resource group for ${environment.name} copy?`)) return;
     try {
       const created = await createEnvironment({
         customerId: environment.customerId,
@@ -138,11 +142,24 @@ export function App() {
   }
 
   async function onDelete(environment: EnvironmentSummary) {
-    if (!window.confirm(`Delete ${environment.name}?`)) return;
+    const azure = Boolean(environment.slug) && environment.status !== "Destroyed";
+    const prompt = azure
+      ? `Destroy the Azure resource group for ${environment.name}? This removes that group, its database, and its portal site.`
+      : `Delete ${environment.name}?`;
+    if (!window.confirm(prompt)) return;
     setError(null);
-    await deleteEnvironment(environment.id);
-    if (selected?.id === environment.id) setSelected(null);
-    await loadLists();
+    try {
+      const updated = await deleteEnvironment(environment.id);
+      await loadLists();
+      if (updated) {
+        setSelected(updated);
+        setView("environments");
+      } else if (selected?.id === environment.id) {
+        setSelected(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete the demo");
+    }
   }
 
   const counts = {
@@ -360,7 +377,7 @@ function EnvironmentTable({
                   <div className="actions">
                     <button className="icon" aria-label={`Open ${environment.name}`} onClick={() => onOpen(environment.id)}><PlayIcon /></button>
                     <button className="icon" aria-label={`Copy ${environment.name}`} onClick={() => onCopy(environment)}><CopyIcon /></button>
-                    <button className="icon danger" aria-label={`Delete ${environment.name}`} onClick={() => onDelete(environment)}><TrashIcon /></button>
+                    <button className="icon danger" aria-label={`${environment.slug && environment.status !== "Destroyed" ? "Destroy" : "Delete"} ${environment.name}`} onClick={() => onDelete(environment)}><TrashIcon /></button>
                   </div>
                 </td>
               </tr>

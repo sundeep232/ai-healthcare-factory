@@ -10,11 +10,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from db import execute, query
-from github_actions import GitHubError, dispatch_deploy, fetch_log, find_run, get_run
+from github_actions import GitHubError, dispatch_deploy, dispatch_destroy, fetch_log, find_run, get_run
 
 app = FastAPI(title="Demo Factory API")
 TOKEN_TTL_SECONDS = 12 * 60 * 60
@@ -164,7 +164,7 @@ def templates():
 def environments():
     rows = query(
         """
-        SELECT e.EnvironmentId, e.Name, e.Status, e.ExpiresAt, e.CreatedAt,
+        SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt,
                c.CustomerId, c.Name AS CustomerName, c.TenantId,
                b.PortalName, b.PrimaryColor,
                t.TemplateId, t.Name AS TemplateName
@@ -190,6 +190,7 @@ def _environment_summary(row: dict) -> dict:
         "tenantId": row["TenantId"],
         "portalName": row["PortalName"],
         "primaryColor": row["PrimaryColor"],
+        "slug": row["Slug"],
         "templateId": _id(row["TemplateId"]) if row["TemplateId"] else None,
         "templateName": row["TemplateName"],
     }
@@ -200,30 +201,33 @@ def _slug(name: str, environment_id: str) -> str:
     return f"{base}-{environment_id.replace('-', '')[:4]}"
 
 
-def _sync_deploy(environment_id: str) -> None:
+def _sync_workflow(environment_id: str) -> None:
     envs = query(
         "SELECT Slug, Status FROM dbo.Environment WHERE EnvironmentId = %s",
         (environment_id,),
     )
-    if not envs or not envs[0]["Slug"] or envs[0]["Status"] != "Deploying":
+    if not envs or not envs[0]["Slug"] or envs[0]["Status"] not in ("Deploying", "Destroying"):
         return
+    destroying = envs[0]["Status"] == "Destroying"
+    verb = "Destroy" if destroying else "Deploy"
     rows = query(
         """
         SELECT DeploymentLogId, Status, WorkflowRunId, LogText
         FROM dbo.DeploymentLog
-        WHERE EnvironmentId = %s AND Action = N'Deploy'
+        WHERE EnvironmentId = %s AND Action = %s
         ORDER BY StartedAt DESC
         """,
-        (environment_id,),
+        (environment_id, verb),
     )
     if not rows or rows[0]["Status"] not in ("Running", "Queued"):
         return
     row = rows[0]
     log_id = str(row["DeploymentLogId"])
     run_id = row["WorkflowRunId"]
+    running_message = "Terraform is destroying the resource group." if destroying else "Terraform is running."
     try:
         if not run_id:
-            run_id = find_run(environment_id)
+            run_id = find_run(environment_id, verb)
             if not run_id:
                 waiting = "Waiting for GitHub Actions to start."
                 execute(
@@ -241,28 +245,29 @@ def _sync_deploy(environment_id: str) -> None:
                 SET WorkflowRunId = %s, Message = %s
                 WHERE DeploymentLogId = %s
                 """,
-                (run_id, "GitHub Actions is applying Terraform.", log_id),
+                (run_id, running_message, log_id),
             )
         run = get_run(int(run_id))
         log_text = fetch_log(int(run_id))
         if run.get("status") == "completed":
             ok = run.get("conclusion") == "success"
+            if destroying:
+                finished = "Terraform destroy finished." if ok else f"Terraform destroy {run.get('conclusion') or 'failed'}."
+                environment_status = "Destroyed" if ok else "Failed"
+            else:
+                finished = "Terraform apply finished." if ok else f"Terraform apply {run.get('conclusion') or 'failed'}."
+                environment_status = "Active" if ok else "Failed"
             execute(
                 """
                 UPDATE dbo.DeploymentLog
                 SET Status = %s, Message = %s, LogText = %s, FinishedAt = SYSUTCDATETIME()
                 WHERE DeploymentLogId = %s
                 """,
-                (
-                    "Succeeded" if ok else "Failed",
-                    "Terraform apply finished." if ok else f"Terraform apply {run.get('conclusion') or 'failed'}.",
-                    log_text,
-                    log_id,
-                ),
+                ("Succeeded" if ok else "Failed", finished, log_text, log_id),
             )
             execute(
                 "UPDATE dbo.Environment SET Status = %s WHERE EnvironmentId = %s",
-                ("Active" if ok else "Failed", environment_id),
+                (environment_status, environment_id),
             )
             return
         if log_text != (row["LogText"] or ""):
@@ -272,7 +277,7 @@ def _sync_deploy(environment_id: str) -> None:
                 SET Status = N'Running', Message = %s, LogText = %s
                 WHERE DeploymentLogId = %s
                 """,
-                ("Terraform is running.", log_text, log_id),
+                (running_message, log_text, log_id),
             )
     except GitHubError as exc:
         execute(
@@ -283,7 +288,7 @@ def _sync_deploy(environment_id: str) -> None:
 
 @app.get("/api/environments/{environment_id}")
 def environment_detail(environment_id: str):
-    _sync_deploy(environment_id)
+    _sync_workflow(environment_id)
     rows = query(
         """
         SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt,
@@ -414,15 +419,52 @@ def create_environment(body: NewEnvironment):
     return environment_detail(environment_id)
 
 
-@app.delete("/api/environments/{environment_id}", status_code=204)
-def delete_environment(environment_id: str):
-    found = query("SELECT EnvironmentId FROM dbo.Environment WHERE EnvironmentId = %s", (environment_id,))
-    if not found:
-        raise HTTPException(status_code=404, detail="Environment not found")
+def _purge_environment(environment_id: str) -> None:
     execute("DELETE FROM dbo.UsageCost WHERE EnvironmentId = %s", (environment_id,))
     execute("DELETE FROM dbo.ConversationLog WHERE EnvironmentId = %s", (environment_id,))
     execute("DELETE FROM dbo.DeploymentLog WHERE EnvironmentId = %s", (environment_id,))
     execute("DELETE FROM dbo.Environment WHERE EnvironmentId = %s", (environment_id,))
+
+
+@app.delete("/api/environments/{environment_id}")
+def delete_environment(environment_id: str):
+    found = query(
+        "SELECT Name, Slug, Status FROM dbo.Environment WHERE EnvironmentId = %s",
+        (environment_id,),
+    )
+    if not found:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    row = found[0]
+    if row["Status"] == "Destroying":
+        raise HTTPException(status_code=409, detail="Destroy is already running")
+    if not row["Slug"] or row["Status"] == "Destroyed":
+        _purge_environment(environment_id)
+        return Response(status_code=204)
+
+    log_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    try:
+        dispatch_destroy(row["Slug"], row["Name"], environment_id)
+        status = "Running"
+        message = "GitHub Actions destroy queued."
+        environment_status = "Destroying"
+    except GitHubError as exc:
+        status = "Failed"
+        message = str(exc)[:900]
+        environment_status = "Failed"
+    execute(
+        "UPDATE dbo.Environment SET Status = %s WHERE EnvironmentId = %s",
+        (environment_status, environment_id),
+    )
+    execute(
+        """
+        INSERT INTO dbo.DeploymentLog
+            (DeploymentLogId, EnvironmentId, Action, Status, Message, LogText, StartedAt, FinishedAt)
+        VALUES (%s, %s, N'Destroy', %s, %s, %s, %s, CASE WHEN %s = N'Failed' THEN %s ELSE NULL END)
+        """,
+        (log_id, environment_id, status, message, message, now, status, now),
+    )
+    return environment_detail(environment_id)
 
 
 @app.get("/api/analytics")

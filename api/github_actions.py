@@ -57,7 +57,9 @@ def _request(method: str, path: str, body: dict | None = None, accept: str = "ap
         raise GitHubError(f"GitHub returned {exc.code}. {message}".strip()) from None
 
 
-def dispatch_deploy(slug: str, display_name: str, environment_id: str) -> None:
+def dispatch_workflow(slug: str, display_name: str, environment_id: str, action: str) -> None:
+    if action not in ("apply", "destroy"):
+        raise GitHubError("Unsupported workflow action")
     _request(
         "POST",
         f"/actions/workflows/{WORKFLOW_FILE}/dispatches",
@@ -67,18 +69,27 @@ def dispatch_deploy(slug: str, display_name: str, environment_id: str) -> None:
                 "slug": slug,
                 "display_name": display_name,
                 "environment_id": environment_id,
+                "action": action,
             },
         },
     )
 
 
-def find_run(environment_id: str) -> int | None:
+def dispatch_deploy(slug: str, display_name: str, environment_id: str) -> None:
+    dispatch_workflow(slug, display_name, environment_id, "apply")
+
+
+def dispatch_destroy(slug: str, display_name: str, environment_id: str) -> None:
+    dispatch_workflow(slug, display_name, environment_id, "destroy")
+
+
+def find_run(environment_id: str, verb: str = "Deploy") -> int | None:
     payload = _request(
         "GET",
         f"/actions/workflows/{WORKFLOW_FILE}/runs?event=workflow_dispatch&per_page=20",
     )
-    title = f"Deploy {environment_id}"
-    for run in payload.get("workflow_runs", []):
+    title = f"{verb} {environment_id}"
+    for run in (payload or {}).get("workflow_runs", []):
         if run.get("display_title") == title:
             return int(run["id"])
     return None

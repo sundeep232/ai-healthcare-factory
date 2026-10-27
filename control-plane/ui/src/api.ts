@@ -79,9 +79,11 @@ export function fetchAnalytics() {
   return get<{ totalCost: number; rows: UsageRow[] }>("/api/analytics");
 }
 
-export async function deleteEnvironment(id: string) {
+export async function deleteEnvironment(id: string): Promise<EnvironmentDetail | null> {
   const response = await fetch(url(`/api/environments/${id}`), { method: "DELETE", headers: headers() });
+  if (response.status === 204) return null;
   if (!response.ok) throw await readError(response, "Could not delete the environment");
+  return response.json() as Promise<EnvironmentDetail>;
 }
 
 export async function createEnvironment(body: { customerId: string; templateId: string; name: string }) {

@@ -36,10 +36,10 @@ export type EnvironmentSummary = {
   primaryColor: string | null;
   templateId: string | null;
   templateName: string | null;
+  slug: string | null;
 };
 
 export type EnvironmentDetail = EnvironmentSummary & {
-  slug: string | null;
   secondaryColor: string | null;
   deployments: {
     id: string;

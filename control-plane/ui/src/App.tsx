@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
+  authToken,
+  clearToken,
   createEnvironment,
   deleteEnvironment,
   fetchAnalytics,
@@ -7,6 +9,7 @@ import {
   fetchEnvironment,
   fetchEnvironments,
   fetchTemplates,
+  login,
   type UsageRow,
 } from "./api";
 import type { Customer, EnvironmentDetail, EnvironmentSummary, Template } from "./types";
@@ -37,6 +40,7 @@ function shownStatus(environment: { status: string; expiresAt: string | null }) 
 }
 
 export function App() {
+  const [signedIn, setSignedIn] = useState(() => Boolean(authToken()));
   const [view, setView] = useState<View>("environments");
   const [environments, setEnvironments] = useState<EnvironmentSummary[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -66,8 +70,12 @@ export function App() {
   }
 
   useEffect(() => {
-    loadLists().catch((err: Error) => setError(err.message));
-  }, []);
+    if (!signedIn) return;
+    loadLists().catch((err: Error) => {
+      if (!authToken()) setSignedIn(false);
+      else setError(err.message);
+    });
+  }, [signedIn]);
 
   function openView(next: View) {
     setView(next);
@@ -116,6 +124,8 @@ export function App() {
     Expired: environments.filter((item) => shownStatus(item) === "Expired").length,
   };
 
+  if (!signedIn) return <Login onSuccess={() => setSignedIn(true)} />;
+
   return (
     <div className="app">
       <aside className="nav">
@@ -126,6 +136,7 @@ export function App() {
             {item.label}
           </button>
         ))}
+        <button className="sign-out" onClick={() => { clearToken(); setSignedIn(false); }}>Sign out</button>
       </aside>
       <div className="workspace">
         <header className="appbar">Demo Factory</header>
@@ -242,6 +253,43 @@ export function App() {
           )}
         </main>
       </div>
+    </div>
+  );
+}
+
+function Login({ onSuccess }: { onSuccess: () => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    try {
+      await login(username, password);
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not sign in");
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <form className="login-card" onSubmit={onSubmit}>
+        <div className="brand">Optum</div>
+        <h2>Demo Factory</h2>
+        <p className="note">Sign in to open the control plane.</p>
+        {error && <p className="error">{error}</p>}
+        <label>
+          User ID
+          <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+        </label>
+        <label>
+          Password
+          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" />
+        </label>
+        <button className="primary" type="submit">Sign in</button>
+      </form>
     </div>
   );
 }

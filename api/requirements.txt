@@ -1,5 +1,6 @@
-fastapi>=0.115
-uvicorn>=0.32
-gunicorn>=23.0
-pymssql>=2.3
-python-dotenv>=1.0
+fastapi>=0.115,<0.116
+uvicorn>=0.32,<0.35
+gunicorn>=23.0,<24
+anyio>=4.4,<4.8
+pymssql>=2.3,<2.5
+python-dotenv>=1.0,<2

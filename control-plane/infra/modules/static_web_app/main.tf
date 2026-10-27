@@ -9,5 +9,10 @@ resource "azurerm_static_web_app" "this" {
     API_BASE_URL = var.api_base_url
   }
 
+  # Sign-in settings are applied outside this resource so a later apply does not remove them.
+  lifecycle {
+    ignore_changes = [app_settings]
+  }
+
   tags = var.tags
 }

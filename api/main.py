@@ -1,15 +1,60 @@
+import hashlib
+import hmac
 import json
+import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db import execute, query
 
 app = FastAPI(title="Demo Factory API")
+TOKEN_TTL_SECONDS = 12 * 60 * 60
+
+
+def _auth_secret() -> str:
+    return os.environ.get("PORTAL_AUTH_SECRET", "").strip()
+
+
+def _issue_token(username: str) -> str:
+    expires = str(int(time.time()) + TOKEN_TTL_SECONDS)
+    payload = f"{username}.{expires}"
+    signature = hmac.new(_auth_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _valid_token(token: str) -> bool:
+    secret = _auth_secret()
+    if not secret or token.count(".") != 2:
+        return False
+    username, expires, signature = token.split(".", 2)
+    payload = f"{username}.{expires}"
+    expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return False
+    try:
+        return int(expires) > int(time.time())
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path == "/api/login" or not request.url.path.startswith("/api"):
+        return await call_next(request)
+    header = request.headers.get("authorization", "")
+    token = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+    if not _valid_token(token):
+        return JSONResponse(status_code=401, content={"detail": "Sign in required"})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -32,6 +77,24 @@ def _iso(value: Any) -> str | None:
 
 def _id(value: Any) -> str:
     return str(value)
+
+
+class Login(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/login")
+def login(body: Login):
+    username = os.environ.get("PORTAL_USERNAME", "").strip()
+    password = os.environ.get("PORTAL_PASSWORD", "")
+    if not username or not password or not _auth_secret():
+        raise HTTPException(status_code=503, detail="Sign-in is not configured")
+    username_ok = len(body.username.strip()) == len(username) and hmac.compare_digest(body.username.strip(), username)
+    password_ok = len(body.password) == len(password) and hmac.compare_digest(body.password, password)
+    if not username_ok or not password_ok:
+        raise HTTPException(status_code=401, detail="User ID or password is incorrect")
+    return {"token": _issue_token(username)}
 
 
 @app.get("/api/health")

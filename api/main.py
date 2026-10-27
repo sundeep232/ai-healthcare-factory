@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from db import execute, query
 from github_actions import GitHubError, dispatch_deploy, dispatch_destroy, fetch_log, find_run, get_run
-from resources import resources_from_definition
+from resources import resources_from_definition, synthetic_members_from_definition
 
 app = FastAPI(title="Demo Factory API")
 TOKEN_TTL_SECONDS = 12 * 60 * 60
@@ -212,18 +212,22 @@ def _environment_summary(row: dict) -> dict:
 
 def _queued_message(prefix: str, resources: list[str]) -> str:
     if not resources:
-        return f"{prefix} for the resource group."
-    return f"{prefix} for {', '.join(resources)}."
+        text = f"{prefix} for the resource group."
+    else:
+        text = f"{prefix} for {', '.join(resources)}."
+    if "sql" in resources and prefix.startswith("GitHub Actions workflow"):
+        text = text[:-1] + ". Synthetic payer data loads after Terraform."
+    return text
 
 
-def _template_resources(template_id: str | None) -> list[str]:
-    if not template_id:
-        return resources_from_definition({})
-    rows = query("SELECT DefinitionJson FROM dbo.Template WHERE TemplateId = %s", (template_id,))
-    if not rows:
-        return resources_from_definition({})
+def _template_plan(template_id: str | None) -> tuple[list[str], int]:
+    definition: Any = {}
+    if template_id:
+        rows = query("SELECT DefinitionJson FROM dbo.Template WHERE TemplateId = %s", (template_id,))
+        if rows:
+            definition = rows[0]["DefinitionJson"]
     try:
-        return resources_from_definition(rows[0]["DefinitionJson"])
+        return resources_from_definition(definition), synthetic_members_from_definition(definition)
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -420,6 +424,7 @@ def create_environment(body: NewEnvironment):
         raise HTTPException(status_code=400, detail="Customer or template was not found")
     try:
         resources = resources_from_definition(template[0]["DefinitionJson"])
+        synthetic_members = synthetic_members_from_definition(template[0]["DefinitionJson"])
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -439,7 +444,7 @@ def create_environment(body: NewEnvironment):
         (environment_id, body.customerId, body.templateId, name, slug, now),
     )
     try:
-        dispatch_deploy(slug, name, environment_id, resources)
+        dispatch_deploy(slug, name, environment_id, resources, synthetic_members)
         status = "Running"
         message = _queued_message("GitHub Actions workflow queued", resources)
         environment_status = "Deploying"
@@ -488,8 +493,8 @@ def delete_environment(environment_id: str):
     log_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
-        resources = _template_resources(_id(row["TemplateId"]) if row["TemplateId"] else None)
-        dispatch_destroy(row["Slug"], row["Name"], environment_id, resources)
+        resources, synthetic_members = _template_plan(_id(row["TemplateId"]) if row["TemplateId"] else None)
+        dispatch_destroy(row["Slug"], row["Name"], environment_id, resources, synthetic_members)
         status = "Running"
         message = _queued_message("GitHub Actions destroy queued", resources)
         environment_status = "Destroying"

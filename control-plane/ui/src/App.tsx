@@ -243,7 +243,7 @@ export function App() {
           ) : view === "create" ? (
             <>
               <div className="top"><h2>Create Demo</h2></div>
-              <p className="note">Starts a GitHub Actions workflow that creates this demo's resource group and the Azure resources named on the template. The deploy log opens when the workflow is queued.</p>
+              <p className="note">Starts a GitHub Actions workflow that creates this demo's resource group and the Azure resources named on the template. When the template includes Azure SQL, synthetic member, claim, authorization, and care-management data is loaded after Terraform. The deploy log opens when the workflow is queued.</p>
               <form className="form" onSubmit={onCreate}>
                 <label>
                   Name

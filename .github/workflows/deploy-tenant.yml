@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: '["sql","portal"]'
+      synthetic_members:
+        description: Synthetic members loaded into the tenant database after apply
+        required: false
+        type: string
+        default: "250"
 
 permissions:
   id-token: write
@@ -66,6 +71,7 @@ jobs:
           TF_VAR_environment_id: ${{ inputs.environment_id }}
           TF_VAR_display_name: ${{ inputs.display_name }}
           TF_VAR_resources: ${{ inputs.resources }}
+          SYNTHETIC_MEMBERS: ${{ inputs.synthetic_members }}
         run: |
           set -euo pipefail
           if [[ "$TF_ACTION" != "apply" && "$TF_ACTION" != "destroy" ]]; then
@@ -107,3 +113,45 @@ jobs:
             -backend-config="use_azuread_auth=true" \
             -backend-config="use_oidc=true"
           terraform "$TF_ACTION" -input=false -auto-approve
+          if [[ "$TF_ACTION" == "apply" ]] && has sql; then
+            if [[ ! "$SYNTHETIC_MEMBERS" =~ ^[0-9]+$ ]] || (( SYNTHETIC_MEMBERS < 10 || SYNTHETIC_MEMBERS > 1000 )); then
+              echo "Synthetic member count must be from 10 to 1000"
+              exit 1
+            fi
+            sql_password="$(terraform output -raw sql_admin_password)"
+            mask="${sql_password//%/%25}"
+            mask="${mask//$'\n'/%0A}"
+            mask="${mask//$'\r'/%0D}"
+            echo "::add-mask::${mask}"
+            sql_server="$(terraform output -raw sql_server_fqdn)"
+            runner_ip="$(curl -fsS https://api.ipify.org)"
+            echo "Loading synthetic payer data into ${sql_server}"
+            az sql server firewall-rule delete \
+              --resource-group "rg-${TF_VAR_slug}-ahf" \
+              --server "sql-${TF_VAR_slug}" \
+              --name gh-runner \
+              --output none || true
+            az sql server firewall-rule create \
+              --resource-group "rg-${TF_VAR_slug}-ahf" \
+              --server "sql-${TF_VAR_slug}" \
+              --name gh-runner \
+              --start-ip-address "$runner_ip" \
+              --end-ip-address "$runner_ip" \
+              --output none
+            cleanup_firewall() {
+              az sql server firewall-rule delete \
+                --resource-group "rg-${TF_VAR_slug}-ahf" \
+                --server "sql-${TF_VAR_slug}" \
+                --name gh-runner \
+                --output none || true
+            }
+            trap cleanup_firewall EXIT
+            python3 -m venv "$RUNNER_TEMP/payer-seed"
+            "$RUNNER_TEMP/payer-seed/bin/pip" install --disable-pip-version-check -q -r ../database/requirements.txt
+            SQL_SERVER="$sql_server" \
+              SQL_DATABASE="sqldb-tenant" \
+              SQL_ADMIN_LOGIN="sqladmin" \
+              SQL_ADMIN_PASSWORD="$sql_password" \
+              SYNTHETIC_MEMBERS="$SYNTHETIC_MEMBERS" \
+              "$RUNNER_TEMP/payer-seed/bin/python" ../database/seed.py
+          fi

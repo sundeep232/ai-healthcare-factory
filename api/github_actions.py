@@ -63,6 +63,7 @@ def dispatch_workflow(
     environment_id: str,
     action: str,
     resources: list[str],
+    synthetic_members: int,
 ) -> None:
     if action not in ("apply", "destroy"):
         raise GitHubError("Unsupported workflow action")
@@ -77,17 +78,30 @@ def dispatch_workflow(
                 "environment_id": environment_id,
                 "action": action,
                 "resources": json.dumps(resources, separators=(",", ":")),
+                "synthetic_members": str(synthetic_members),
             },
         },
     )
 
 
-def dispatch_deploy(slug: str, display_name: str, environment_id: str, resources: list[str]) -> None:
-    dispatch_workflow(slug, display_name, environment_id, "apply", resources)
+def dispatch_deploy(
+    slug: str,
+    display_name: str,
+    environment_id: str,
+    resources: list[str],
+    synthetic_members: int,
+) -> None:
+    dispatch_workflow(slug, display_name, environment_id, "apply", resources, synthetic_members)
 
 
-def dispatch_destroy(slug: str, display_name: str, environment_id: str, resources: list[str]) -> None:
-    dispatch_workflow(slug, display_name, environment_id, "destroy", resources)
+def dispatch_destroy(
+    slug: str,
+    display_name: str,
+    environment_id: str,
+    resources: list[str],
+    synthetic_members: int,
+) -> None:
+    dispatch_workflow(slug, display_name, environment_id, "destroy", resources, synthetic_members)
 
 
 def find_run(environment_id: str, verb: str = "Deploy") -> int | None:

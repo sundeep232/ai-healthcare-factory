@@ -38,6 +38,11 @@ function templateResources(template: Template | undefined): string[] {
   return names && names.length > 0 ? names : ["sql", "portal"];
 }
 
+function suggestedMembers(template: Template | undefined) {
+  const count = template?.definition.syntheticMembers;
+  return count && count >= 10 && count <= 1000 ? count : 250;
+}
+
 function resourceText(names: string[]) {
   return names.map((name) => RESOURCE_LABELS[name] ?? name).join(", ");
 }
@@ -70,6 +75,7 @@ export function App() {
   const [name, setName] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [templateId, setTemplateId] = useState("");
+  const [memberCount, setMemberCount] = useState("250");
 
   async function loadLists() {
     const [environmentRows, templateRows, customerRows, analytics] = await Promise.all([
@@ -85,6 +91,7 @@ export function App() {
     setTotalCost(analytics.totalCost);
     setCustomerId((current) => current || customerRows[0]?.id || "");
     setTemplateId((current) => current || templateRows[0]?.id || "");
+    setMemberCount((current) => current === "250" ? String(suggestedMembers(templateRows[0])) : current);
   }
 
   useEffect(() => {
@@ -141,10 +148,17 @@ export function App() {
     event.preventDefault();
     setError(null);
     const demoName = name || "New demo";
-    const resources = templateResources(templates.find((item) => item.id === templateId));
-    if (!window.confirm(`Create the Azure resource group for ${demoName}? It will include ${resourceText(resources)}.`)) return;
+    const selectedTemplate = templates.find((item) => item.id === templateId);
+    const resources = templateResources(selectedTemplate);
+    const members = Number(memberCount);
+    if (resources.includes("sql") && (!Number.isInteger(members) || members < 10 || members > 1000)) {
+      setError("Synthetic members must be a whole number from 10 to 1000");
+      return;
+    }
+    const memberNote = resources.includes("sql") ? ` Azure SQL will load ${members} synthetic members.` : "";
+    if (!window.confirm(`Create the Azure resource group for ${demoName}? It will include ${resourceText(resources)}.${memberNote}`)) return;
     try {
-      const created = await createEnvironment({ customerId, templateId, name: demoName });
+      const created = await createEnvironment({ customerId, templateId, name: demoName, syntheticMembers: members });
       setName("");
       await loadLists();
       setSelected(created);
@@ -259,12 +273,22 @@ export function App() {
                 </label>
                 <label>
                   Template
-                  <select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+                  <select value={templateId} onChange={(event) => {
+                    const nextId = event.target.value;
+                    setTemplateId(nextId);
+                    setMemberCount(String(suggestedMembers(templates.find((item) => item.id === nextId))));
+                  }}>
                     {templates.map((template) => (
                       <option key={template.id} value={template.id}>{template.name}</option>
                     ))}
                   </select>
                 </label>
+                {templateResources(templates.find((item) => item.id === templateId)).includes("sql") && (
+                  <label>
+                    Synthetic members
+                    <input type="number" min={10} max={1000} value={memberCount} onChange={(event) => setMemberCount(event.target.value)} />
+                  </label>
+                )}
                 <p className="note">Resources: {resourceText(templateResources(templates.find((item) => item.id === templateId)))}</p>
                 <button className="primary" type="submit"><PlusIcon /> Create Demo</button>
               </form>

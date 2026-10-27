@@ -210,13 +210,13 @@ def _environment_summary(row: dict) -> dict:
     }
 
 
-def _queued_message(prefix: str, resources: list[str]) -> str:
+def _queued_message(prefix: str, resources: list[str], synthetic_members: int | None = None) -> str:
     if not resources:
         text = f"{prefix} for the resource group."
     else:
         text = f"{prefix} for {', '.join(resources)}."
-    if "sql" in resources and prefix.startswith("GitHub Actions workflow"):
-        text = text[:-1] + ". Synthetic payer data loads after Terraform."
+    if "sql" in resources and synthetic_members and prefix.startswith("GitHub Actions workflow"):
+        text = text[:-1] + f". {synthetic_members} synthetic members load after Terraform."
     return text
 
 
@@ -414,6 +414,7 @@ class NewEnvironment(BaseModel):
     customerId: str
     templateId: str
     name: str = Field(min_length=1, max_length=200)
+    syntheticMembers: int | None = None
 
 
 @app.post("/api/environments", status_code=201)
@@ -424,7 +425,9 @@ def create_environment(body: NewEnvironment):
         raise HTTPException(status_code=400, detail="Customer or template was not found")
     try:
         resources = resources_from_definition(template[0]["DefinitionJson"])
-        synthetic_members = synthetic_members_from_definition(template[0]["DefinitionJson"])
+        synthetic_members = body.syntheticMembers if body.syntheticMembers is not None else synthetic_members_from_definition(template[0]["DefinitionJson"])
+        if synthetic_members < 10 or synthetic_members > 1000:
+            raise ValueError("syntheticMembers must be from 10 to 1000")
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -446,7 +449,7 @@ def create_environment(body: NewEnvironment):
     try:
         dispatch_deploy(slug, name, environment_id, resources, synthetic_members)
         status = "Running"
-        message = _queued_message("GitHub Actions workflow queued", resources)
+        message = _queued_message("GitHub Actions workflow queued", resources, synthetic_members)
         environment_status = "Deploying"
     except GitHubError as exc:
         status = "Failed"

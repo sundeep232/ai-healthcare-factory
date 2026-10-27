@@ -86,7 +86,7 @@ export async function deleteEnvironment(id: string): Promise<EnvironmentDetail |
   return response.json() as Promise<EnvironmentDetail>;
 }
 
-export async function createEnvironment(body: { customerId: string; templateId: string; name: string }) {
+export async function createEnvironment(body: { customerId: string; templateId: string; name: string; syntheticMembers?: number }) {
   const response = await fetch(url("/api/environments"), {
     method: "POST",
     headers: headers({ "Content-Type": "application/json" }),

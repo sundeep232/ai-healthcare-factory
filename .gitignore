@@ -1,0 +1,41 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Terraform working directories and state (never commit)
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+*.tfplan
+tfplan
+
+# Environment-specific values. Examples are committed.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Generated remote-backend coordinates (examples are committed).
+backend.hcl
+
+# First-apply hold file. See README.
+*.tf.disabled
+
+# Local CLI overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp

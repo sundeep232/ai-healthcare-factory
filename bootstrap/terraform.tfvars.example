@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (git-ignored) and set the subscription.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Optional overrides (defaults shown)
+# location             = "centralus"
+# name_prefix          = "ahf"
+# resource_group_name  = "rg-ahf-tfstate"
+# tfstate_container_name = "tfstate"
+# replication_type     = "ZRS"   # use "LRS" in a region without zones
+# use_azuread_auth     = true
+# additional_state_principal_ids = []

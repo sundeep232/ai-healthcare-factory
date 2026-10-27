@@ -3,6 +3,16 @@
 .env.*
 !.env.example
 
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Node
+node_modules/
+control-plane/ui/dist/
+
 # Terraform working directories and state (never commit)
 .terraform/
 *.tfstate

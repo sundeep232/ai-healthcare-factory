@@ -38,3 +38,22 @@ variable "display_name" {
   description = "Demo name typed in the portal."
   type        = string
 }
+
+variable "openai_location" {
+  description = "Region for Azure OpenAI. The resource group stays in var.location."
+  type        = string
+  default     = "eastus"
+}
+
+variable "resources" {
+  description = "Modules selected by the demo template."
+  type        = list(string)
+  default     = ["sql", "portal"]
+
+  validation {
+    condition = length(var.resources) == length(distinct(var.resources)) && alltrue([
+      for name in var.resources : contains(["sql", "portal", "openai", "speech", "communication"], name)
+    ])
+    error_message = "resources must be unique names from sql, portal, openai, speech, and communication."
+  }
+}

@@ -25,6 +25,11 @@ on:
         options:
           - apply
           - destroy
+      resources:
+        description: JSON array of module names from the template
+        required: false
+        type: string
+        default: '["sql","portal"]'
 
 permissions:
   id-token: write
@@ -60,6 +65,7 @@ jobs:
           TF_VAR_location: centralus
           TF_VAR_environment_id: ${{ inputs.environment_id }}
           TF_VAR_display_name: ${{ inputs.display_name }}
+          TF_VAR_resources: ${{ inputs.resources }}
         run: |
           set -euo pipefail
           if [[ "$TF_ACTION" != "apply" && "$TF_ACTION" != "destroy" ]]; then
@@ -74,7 +80,25 @@ jobs:
             echo "Environment id is invalid"
             exit 1
           fi
-          echo "Terraform ${TF_ACTION}"
+          if ! jq -e 'type == "array" and all(.[]; type == "string" and (. == "sql" or . == "portal" or . == "openai" or . == "speech" or . == "communication")) and length == (unique | length)' <<<"$TF_VAR_resources" >/dev/null; then
+            echo "Resources are invalid"
+            exit 1
+          fi
+          ensure_provider() {
+            local namespace="$1"
+            local state
+            state="$(az provider show --namespace "$namespace" --query registrationState -o tsv)"
+            if [[ "$state" != "Registered" ]]; then
+              echo "Registering ${namespace}"
+              az provider register --namespace "$namespace" --wait
+            fi
+          }
+          has() { jq -e --arg name "$1" 'any(. == $name)' <<<"$TF_VAR_resources" >/dev/null; }
+          if has sql; then ensure_provider Microsoft.Sql; fi
+          if has portal; then ensure_provider Microsoft.Web; fi
+          if has openai || has speech; then ensure_provider Microsoft.CognitiveServices; fi
+          if has communication; then ensure_provider Microsoft.Communication; fi
+          echo "Terraform ${TF_ACTION} for ${TF_VAR_resources}"
           terraform init -input=false \
             -backend-config="resource_group_name=rg-ahf-tfstate" \
             -backend-config="storage_account_name=stahftf4jqp3v" \

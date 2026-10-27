@@ -3,9 +3,21 @@ output "resource_group_name" {
 }
 
 output "sql_server_fqdn" {
-  value = azurerm_mssql_server.this.fully_qualified_domain_name
+  value = one(module.sql[*].server_fqdn)
 }
 
 output "portal_hostname" {
-  value = azurerm_static_web_app.portal.default_host_name
+  value = one(module.portal[*].default_host_name)
+}
+
+output "openai_endpoint" {
+  value = one(module.openai[*].endpoint)
+}
+
+output "speech_endpoint" {
+  value = one(module.speech[*].endpoint)
+}
+
+output "communication_hostname" {
+  value = one(module.communication[*].hostname)
 }

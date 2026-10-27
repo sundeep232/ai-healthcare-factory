@@ -25,6 +25,23 @@ const nav: { id: View; label: string; icon: ReactNode }[] = [
   { id: "analytics", label: "Analytics", icon: <ChartIcon /> },
 ];
 
+const RESOURCE_LABELS: Record<string, string> = {
+  sql: "Azure SQL",
+  portal: "Portal site",
+  openai: "Azure OpenAI",
+  speech: "Speech",
+  communication: "Communication Services",
+};
+
+function templateResources(template: Template | undefined): string[] {
+  const names = template?.definition.resources;
+  return names && names.length > 0 ? names : ["sql", "portal"];
+}
+
+function resourceText(names: string[]) {
+  return names.map((name) => RESOURCE_LABELS[name] ?? name).join(", ");
+}
+
 function customerLabel(name: string) {
   if (/united/i.test(name)) return "UHC";
   if (/molina/i.test(name)) return "Molina";
@@ -124,7 +141,8 @@ export function App() {
     event.preventDefault();
     setError(null);
     const demoName = name || "New demo";
-    if (!window.confirm(`Create the Azure resource group for ${demoName}?`)) return;
+    const resources = templateResources(templates.find((item) => item.id === templateId));
+    if (!window.confirm(`Create the Azure resource group for ${demoName}? It will include ${resourceText(resources)}.`)) return;
     try {
       const created = await createEnvironment({ customerId, templateId, name: demoName });
       setName("");
@@ -139,7 +157,8 @@ export function App() {
   async function onCopy(environment: EnvironmentSummary) {
     setError(null);
     if (!environment.templateId) return;
-    if (!window.confirm(`Create a new Azure resource group for ${environment.name} copy?`)) return;
+    const resources = templateResources(templates.find((item) => item.id === environment.templateId));
+    if (!window.confirm(`Create a new Azure resource group for ${environment.name} copy? It will include ${resourceText(resources)}.`)) return;
     try {
       const created = await createEnvironment({
         customerId: environment.customerId,
@@ -157,7 +176,7 @@ export function App() {
   async function onDelete(environment: EnvironmentSummary) {
     const azure = Boolean(environment.slug) && environment.status !== "Destroyed";
     const prompt = azure
-      ? `Destroy the Azure resource group for ${environment.name}? This removes that group, its database, and its portal site.`
+      ? `Destroy the Azure resource group for ${environment.name}? This removes that group and the Azure resources created for it.`
       : `Delete ${environment.name}?`;
     if (!window.confirm(prompt)) return;
     setError(null);
@@ -224,7 +243,7 @@ export function App() {
           ) : view === "create" ? (
             <>
               <div className="top"><h2>Create Demo</h2></div>
-              <p className="note">Starts a GitHub Actions workflow that creates this demo's resource group, database, and portal site. The deploy log opens when the workflow is queued.</p>
+              <p className="note">Starts a GitHub Actions workflow that creates this demo's resource group and the Azure resources named on the template. The deploy log opens when the workflow is queued.</p>
               <form className="form" onSubmit={onCreate}>
                 <label>
                   Name
@@ -246,6 +265,7 @@ export function App() {
                     ))}
                   </select>
                 </label>
+                <p className="note">Resources: {resourceText(templateResources(templates.find((item) => item.id === templateId)))}</p>
                 <button className="primary" type="submit"><PlusIcon /> Create Demo</button>
               </form>
             </>
@@ -254,12 +274,13 @@ export function App() {
               <div className="top"><h2>Templates</h2></div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Name</th><th>Channels</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Channels</th><th>Resources</th><th>Status</th></tr></thead>
                   <tbody>
                     {templates.map((template) => (
                       <tr key={template.id}>
                         <td>{template.name}</td>
                         <td>{template.definition.channels?.join(", ")}</td>
+                        <td>{resourceText(templateResources(template))}</td>
                         <td>{template.status}</td>
                       </tr>
                     ))}

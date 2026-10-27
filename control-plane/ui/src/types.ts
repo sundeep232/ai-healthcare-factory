@@ -16,6 +16,7 @@ export type Template = {
   definition: {
     channels?: string[];
     capabilities?: string[];
+    resources?: string[];
     syntheticMembers?: number;
     estimatedMinutes?: number;
   };

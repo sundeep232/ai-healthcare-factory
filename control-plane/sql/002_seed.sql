@@ -45,13 +45,13 @@ INSERT INTO dbo.UserAccess (UserAccessId, UserId, CustomerId) VALUES
 
 INSERT INTO dbo.Template (TemplateId, Name, Status, DefinitionJson, CreatedByUserId, CreatedAt) VALUES
 (@TplClaimStatus, N'Claim Status Agent', N'Saved',
- N'{"channels":["chat","voice"],"capabilities":["claim-status","denial-explanation","payment-details"],"syntheticMembers":250,"estimatedMinutes":2}',
+ N'{"channels":["chat","voice"],"capabilities":["claim-status","denial-explanation","payment-details"],"resources":["sql","portal","openai","speech","communication"],"syntheticMembers":250,"estimatedMinutes":2}',
  @User, '2026-09-15T18:00:00'),
 (@TplClaimsAuth, N'Claims + Authorization', N'Saved',
- N'{"channels":["chat"],"capabilities":["claim-status","authorization"],"syntheticMembers":500,"estimatedMinutes":3}',
+ N'{"channels":["chat"],"capabilities":["claim-status","authorization"],"resources":["sql","portal","openai"],"syntheticMembers":500,"estimatedMinutes":3}',
  @User, '2026-09-22T18:00:00'),
 (@TplCopilot, N'Provider Service Copilot', N'Saved',
- N'{"channels":["chat","voice"],"capabilities":["claim-status","denial-explanation","payment-details","authorization"],"syntheticMembers":1000,"estimatedMinutes":4}',
+ N'{"channels":["chat","voice"],"capabilities":["claim-status","denial-explanation","payment-details","authorization"],"resources":["sql","portal","openai","speech","communication"],"syntheticMembers":1000,"estimatedMinutes":4}',
  @User, '2026-10-02T18:00:00');
 
 INSERT INTO dbo.Environment (EnvironmentId, CustomerId, TemplateId, Name, Status, ExpiresAt, CreatedAt) VALUES

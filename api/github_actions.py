@@ -57,7 +57,13 @@ def _request(method: str, path: str, body: dict | None = None, accept: str = "ap
         raise GitHubError(f"GitHub returned {exc.code}. {message}".strip()) from None
 
 
-def dispatch_workflow(slug: str, display_name: str, environment_id: str, action: str) -> None:
+def dispatch_workflow(
+    slug: str,
+    display_name: str,
+    environment_id: str,
+    action: str,
+    resources: list[str],
+) -> None:
     if action not in ("apply", "destroy"):
         raise GitHubError("Unsupported workflow action")
     _request(
@@ -70,17 +76,18 @@ def dispatch_workflow(slug: str, display_name: str, environment_id: str, action:
                 "display_name": display_name,
                 "environment_id": environment_id,
                 "action": action,
+                "resources": json.dumps(resources, separators=(",", ":")),
             },
         },
     )
 
 
-def dispatch_deploy(slug: str, display_name: str, environment_id: str) -> None:
-    dispatch_workflow(slug, display_name, environment_id, "apply")
+def dispatch_deploy(slug: str, display_name: str, environment_id: str, resources: list[str]) -> None:
+    dispatch_workflow(slug, display_name, environment_id, "apply", resources)
 
 
-def dispatch_destroy(slug: str, display_name: str, environment_id: str) -> None:
-    dispatch_workflow(slug, display_name, environment_id, "destroy")
+def dispatch_destroy(slug: str, display_name: str, environment_id: str, resources: list[str]) -> None:
+    dispatch_workflow(slug, display_name, environment_id, "destroy", resources)
 
 
 def find_run(environment_id: str, verb: str = "Deploy") -> int | None:

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from db import execute, query
 from github_actions import GitHubError, dispatch_deploy, dispatch_destroy, fetch_log, find_run, get_run
+from resources import resources_from_definition
 
 app = FastAPI(title="Demo Factory API")
 TOKEN_TTL_SECONDS = 12 * 60 * 60
@@ -209,6 +210,24 @@ def _environment_summary(row: dict) -> dict:
     }
 
 
+def _queued_message(prefix: str, resources: list[str]) -> str:
+    if not resources:
+        return f"{prefix} for the resource group."
+    return f"{prefix} for {', '.join(resources)}."
+
+
+def _template_resources(template_id: str | None) -> list[str]:
+    if not template_id:
+        return resources_from_definition({})
+    rows = query("SELECT DefinitionJson FROM dbo.Template WHERE TemplateId = %s", (template_id,))
+    if not rows:
+        return resources_from_definition({})
+    try:
+        return resources_from_definition(rows[0]["DefinitionJson"])
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
 def _slug(name: str, environment_id: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:32] or "demo"
     return f"{base}-{environment_id.replace('-', '')[:4]}"
@@ -396,9 +415,13 @@ class NewEnvironment(BaseModel):
 @app.post("/api/environments", status_code=201)
 def create_environment(body: NewEnvironment):
     customer = query("SELECT CustomerId FROM dbo.Customer WHERE CustomerId = %s", (body.customerId,))
-    template = query("SELECT TemplateId FROM dbo.Template WHERE TemplateId = %s", (body.templateId,))
+    template = query("SELECT TemplateId, DefinitionJson FROM dbo.Template WHERE TemplateId = %s", (body.templateId,))
     if not customer or not template:
         raise HTTPException(status_code=400, detail="Customer or template was not found")
+    try:
+        resources = resources_from_definition(template[0]["DefinitionJson"])
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
     environment_id = str(uuid.uuid4())
     log_id = str(uuid.uuid4())
@@ -416,9 +439,9 @@ def create_environment(body: NewEnvironment):
         (environment_id, body.customerId, body.templateId, name, slug, now),
     )
     try:
-        dispatch_deploy(slug, name, environment_id)
+        dispatch_deploy(slug, name, environment_id, resources)
         status = "Running"
-        message = "GitHub Actions workflow queued."
+        message = _queued_message("GitHub Actions workflow queued", resources)
         environment_status = "Deploying"
     except GitHubError as exc:
         status = "Failed"
@@ -450,7 +473,7 @@ def _purge_environment(environment_id: str) -> None:
 @app.delete("/api/environments/{environment_id}")
 def delete_environment(environment_id: str):
     found = query(
-        "SELECT Name, Slug, Status FROM dbo.Environment WHERE EnvironmentId = %s",
+        "SELECT Name, Slug, Status, TemplateId FROM dbo.Environment WHERE EnvironmentId = %s",
         (environment_id,),
     )
     if not found:
@@ -465,9 +488,10 @@ def delete_environment(environment_id: str):
     log_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
-        dispatch_destroy(row["Slug"], row["Name"], environment_id)
+        resources = _template_resources(_id(row["TemplateId"]) if row["TemplateId"] else None)
+        dispatch_destroy(row["Slug"], row["Name"], environment_id, resources)
         status = "Running"
-        message = "GitHub Actions destroy queued."
+        message = _queued_message("GitHub Actions destroy queued", resources)
         environment_status = "Destroying"
     except GitHubError as exc:
         status = "Failed"

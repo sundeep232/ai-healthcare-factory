@@ -78,6 +78,19 @@ export function App() {
     });
   }, [signedIn]);
 
+  const workflowRunning = environments.some((item) => item.status === "Deploying" || item.status === "Destroying");
+  useEffect(() => {
+    if (!signedIn || !workflowRunning) return;
+    const timer = window.setInterval(() => {
+      fetchEnvironments()
+        .then(setEnvironments)
+        .catch(() => {
+          if (!authToken()) setSignedIn(false);
+        });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [signedIn, workflowRunning]);
+
   function openView(next: View) {
     setView(next);
     setSelected(null);

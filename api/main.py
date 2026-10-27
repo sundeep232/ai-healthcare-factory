@@ -162,6 +162,19 @@ def templates():
 
 @app.get("/api/environments")
 def environments():
+    pending = query(
+        """
+        SELECT EnvironmentId
+        FROM dbo.Environment
+        WHERE Slug IS NOT NULL AND Status IN (%s, %s)
+        """,
+        ("Deploying", "Destroying"),
+    )
+    for item in pending:
+        try:
+            _sync_workflow(str(item["EnvironmentId"]), include_log=False)
+        except GitHubError:
+            pass
     rows = query(
         """
         SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt,
@@ -201,7 +214,7 @@ def _slug(name: str, environment_id: str) -> str:
     return f"{base}-{environment_id.replace('-', '')[:4]}"
 
 
-def _sync_workflow(environment_id: str) -> None:
+def _sync_workflow(environment_id: str, include_log: bool = True) -> None:
     envs = query(
         "SELECT Slug, Status FROM dbo.Environment WHERE EnvironmentId = %s",
         (environment_id,),
@@ -248,8 +261,16 @@ def _sync_workflow(environment_id: str) -> None:
                 (run_id, running_message, log_id),
             )
         run = get_run(int(run_id))
-        log_text = fetch_log(int(run_id))
-        if run.get("status") == "completed":
+        completed = run.get("status") == "completed"
+        log_text = row["LogText"] or ""
+        if include_log or completed:
+            try:
+                downloaded = fetch_log(int(run_id))
+                if downloaded:
+                    log_text = downloaded
+            except GitHubError:
+                pass
+        if completed:
             ok = run.get("conclusion") == "success"
             if destroying:
                 finished = "Terraform destroy finished." if ok else f"Terraform destroy {run.get('conclusion') or 'failed'}."

@@ -29,7 +29,7 @@ output "sql_server_fqdn" {
 }
 
 output "sql_database_name" {
-  description = "Azure SQL database that holds control-plane and tenant tables."
+  description = "Azure SQL database for control-plane customers, templates, environments, and logs."
   value       = module.sql.database_name
 }
 

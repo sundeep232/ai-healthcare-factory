@@ -17,13 +17,13 @@ variable "location" {
 variable "model_name" {
   description = "Chat model deployed for this demo."
   type        = string
-  default     = "gpt-4o-mini"
+  default     = "gpt-5-mini"
 }
 
 variable "model_version" {
-  description = "Model version deployed for this demo."
+  description = "Model version deployed for this demo. gpt-4o-mini 2024-07-18 is closed to new deployments."
   type        = string
-  default     = "2024-07-18"
+  default     = "2025-08-07"
 }
 
 variable "capacity" {

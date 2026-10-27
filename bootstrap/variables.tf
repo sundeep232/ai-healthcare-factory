@@ -40,12 +40,22 @@ variable "tfstate_container_name" {
   description = "Blob container for every stack's state file."
   type        = string
   default     = "tfstate"
+
+  validation {
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$", var.tfstate_container_name))
+    error_message = "tfstate_container_name must be a valid blob container name."
+  }
 }
 
 variable "replication_type" {
   description = "Storage replication for the state account. Use LRS if the region has no availability zones."
   type        = string
   default     = "ZRS"
+
+  validation {
+    condition     = contains(["LRS", "ZRS", "GRS", "RAGRS", "GZRS"], var.replication_type)
+    error_message = "replication_type must be LRS, ZRS, GRS, RAGRS, or GZRS."
+  }
 }
 
 variable "use_azuread_auth" {
@@ -58,6 +68,14 @@ variable "additional_state_principal_ids" {
   description = "Extra Entra object IDs that may read and write state. Use this for a CI service principal."
   type        = list(string)
   default     = []
+
+  validation {
+    condition = alltrue([
+      for id in var.additional_state_principal_ids :
+      can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", id))
+    ])
+    error_message = "Each additional principal id must be a GUID."
+  }
 }
 
 variable "tags" {

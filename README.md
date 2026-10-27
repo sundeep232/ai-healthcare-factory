@@ -24,10 +24,7 @@ Default prefix is `ahf`. The bootstrap stack defaults to `centralus`. Names are 
 ## Layout
 
 ```
-bootstrap/                 state backend (resource group + storage account)
-control-plane/             shared resource group for the control plane
-modules/resource_group/    resource group module
-modules/tfstate_backend/   storage account, private container, Entra data-plane role
+bootstrap/                 state resource group, storage account, and container
 scripts/                   wire remote state after bootstrap
 ```
 

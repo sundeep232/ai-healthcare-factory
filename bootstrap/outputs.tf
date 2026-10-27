@@ -1,21 +1,21 @@
 output "tfstate_resource_group_name" {
   description = "Resource group that holds the state storage account."
-  value       = module.state_resource_group.name
+  value       = azurerm_resource_group.tfstate.name
 }
 
 output "tfstate_storage_account_name" {
   description = "Storage account for remote Terraform state."
-  value       = module.tfstate.storage_account_name
+  value       = azurerm_storage_account.tfstate.name
 }
 
 output "tfstate_storage_account_id" {
   description = "Resource ID of the state storage account."
-  value       = module.tfstate.storage_account_id
+  value       = azurerm_storage_account.tfstate.id
 }
 
 output "tfstate_container_name" {
   description = "Blob container for state files. One container, one blob key per stack."
-  value       = module.tfstate.container_name
+  value       = azurerm_storage_container.tfstate.name
 }
 
 output "use_azuread_auth" {
@@ -25,5 +25,5 @@ output "use_azuread_auth" {
 
 output "location" {
   description = "Region of the state resources."
-  value       = module.state_resource_group.location
+  value       = azurerm_resource_group.tfstate.location
 }

@@ -1,0 +1,5 @@
+fastapi>=0.115,<0.116
+uvicorn>=0.32,<0.35
+gunicorn>=23.0,<24
+anyio>=4.4,<4.8
+pymssql>=2.3,<2.5

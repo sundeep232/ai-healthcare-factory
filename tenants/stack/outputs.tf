@@ -19,6 +19,10 @@ output "portal_hostname" {
   value = one(module.portal[*].default_host_name)
 }
 
+output "agent_hostname" {
+  value = one(module.agent[*].default_hostname)
+}
+
 output "openai_endpoint" {
   value = one(module.openai[*].endpoint)
 }

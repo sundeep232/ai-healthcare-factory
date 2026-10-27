@@ -154,4 +154,41 @@ jobs:
               SQL_ADMIN_PASSWORD="$sql_password" \
               SYNTHETIC_MEMBERS="$SYNTHETIC_MEMBERS" \
               "$RUNNER_TEMP/payer-seed/bin/python" ../database/seed.py
+            if has openai; then
+              agent_host="$(terraform output -raw agent_hostname 2>/dev/null || true)"
+              if [[ -n "$agent_host" && "$agent_host" != "null" ]]; then
+                echo "Deploying the payer agent"
+                (cd ../agent && zip -qr "$RUNNER_TEMP/agent.zip" . -x '*.pyc')
+                az webapp deployment source config-zip \
+                  --resource-group "rg-${TF_VAR_slug}-ahf" \
+                  --name "app-${TF_VAR_slug}" \
+                  --src "$RUNNER_TEMP/agent.zip" || echo "Agent zip deploy returned an error. Checking health."
+                healthy=0
+                for _ in 1 2 3 4 5 6 7 8; do
+                  if curl -fsS "https://${agent_host}/health"; then
+                    healthy=1
+                    break
+                  fi
+                  sleep 20
+                done
+                if [[ "$healthy" != "1" ]]; then
+                  echo "Payer agent did not become healthy"
+                  exit 1
+                fi
+                echo
+                portal_host="$(terraform output -raw portal_hostname 2>/dev/null || true)"
+                if [[ -n "$portal_host" && "$portal_host" != "null" ]]; then
+                  token="$(az staticwebapp secrets list --name "swa-${TF_VAR_slug}" --resource-group "rg-${TF_VAR_slug}-ahf" --query properties.apiKey -o tsv)"
+                  token_mask="${token//%/%25}"
+                  token_mask="${token_mask//$'\n'/%0A}"
+                  echo "::add-mask::${token_mask}"
+                  rm -rf "$RUNNER_TEMP/portal"
+                  mkdir -p "$RUNNER_TEMP/portal"
+                  cp ../portal/index.html ../portal/styles.css ../portal/app.js "$RUNNER_TEMP/portal/"
+                  AGENT_HOST="$agent_host" PORTAL_DIR="$RUNNER_TEMP/portal" python3 -c 'import json, os; open(os.environ["PORTAL_DIR"] + "/config.js", "w", encoding="utf-8").write("window.DEMO_CONFIG = " + json.dumps({"apiBase": "https://" + os.environ["AGENT_HOST"], "name": os.environ["TF_VAR_display_name"]}) + ";\n")'
+                  npx --yes @azure/static-web-apps-cli deploy "$RUNNER_TEMP/portal" --deployment-token "$token" --env production
+                  echo "Provider portal: https://${portal_host}"
+                fi
+              fi
+            fi
           fi

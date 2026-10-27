@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Provider portal</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">Provider portal</p>
+      <h1 id="demo-name">Payer demo</h1>
+    </div>
+    <nav>
+      <button class="tab active" data-panel="portal">Portal</button>
+      <button class="tab" data-panel="chat">Chat</button>
+      <button class="tab" data-panel="phone">Phone</button>
+    </nav>
+  </header>
+  <main>
+    <section id="portal" class="panel active">
+      <p class="lead">Ask about members, claims, authorizations, and care management. Answers come from this demo's database.</p>
+      <div class="prompts" id="prompts"></div>
+    </section>
+    <section id="chat" class="panel">
+      <div id="thread" class="thread"></div>
+      <form id="chat-form">
+        <input id="chat-input" placeholder="Ask about a member, claim, or authorization" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+    <section id="phone" class="panel">
+      <div class="call">
+        <p id="call-status">Ready</p>
+        <button id="call-button" type="button">Start call</button>
+        <p id="call-transcript" class="transcript"></p>
+      </div>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

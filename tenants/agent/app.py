@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 import urllib.request
 from urllib.error import HTTPError
 
@@ -102,12 +103,19 @@ def _complete(messages: list[dict]) -> dict:
         headers={"api-key": os.environ["OPENAI_API_KEY"], "Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.loads(response.read())
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:300]
-        raise HTTPException(status_code=502, detail=f"The language model returned {exc.code}. {detail}") from None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read())
+        except HTTPError as exc:
+            exc.read()
+            if exc.code == 429 and attempt < 3:
+                time.sleep(8)
+                continue
+            if exc.code == 429:
+                raise HTTPException(status_code=429, detail="The language model is busy. Ask again in a moment.") from None
+            raise HTTPException(status_code=502, detail="The language model could not answer.") from None
+    raise HTTPException(status_code=429, detail="The language model is busy. Ask again in a moment.") from None
 
 
 def answer(question: str, spoken: bool) -> str:

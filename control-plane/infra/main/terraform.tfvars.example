@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored). Use the same subscription as bootstrap.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Optional overrides (defaults shown)
+# location            = "centralus"
+# resource_group_name = "rg-controlplane-ahf"

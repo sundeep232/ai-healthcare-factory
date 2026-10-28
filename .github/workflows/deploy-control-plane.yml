@@ -1,9 +1,15 @@
-name: Deploy control plane
+name: Deploy control plane API and portal
 
-run-name: Deploy control plane
+run-name: Deploy control plane API and portal
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "control-plane/api/**"
+      - "control-plane/ui/**"
+      - ".github/workflows/deploy-control-plane.yml"
 
 permissions:
   id-token: write

@@ -36,4 +36,12 @@ resource "azurerm_linux_web_app" "this" {
     SQL_ADMIN_LOGIN                            = var.sql_admin_login
     SQL_ADMIN_PASSWORD                         = "@Microsoft.KeyVault(SecretUri=${var.sql_password_secret_id})"
   }
+
+  # Sign-in, GitHub Actions, Oryx, and the gunicorn command are set on the live app.
+  lifecycle {
+    ignore_changes = [
+      app_settings,
+      site_config[0].app_command_line,
+    ]
+  }
 }

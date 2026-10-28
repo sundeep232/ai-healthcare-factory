@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from db import execute, query
-from github_actions import GitHubError, dispatch_deploy, dispatch_destroy, fetch_log, find_run, get_run
+from github_actions import GitHubError, dispatch_deploy, dispatch_destroy, fetch_log, fetch_progress, find_run, get_run
 from resources import resources_from_definition, synthetic_members_from_definition
 
 app = FastAPI(title="Demo Factory API")
@@ -173,12 +173,12 @@ def environments():
     )
     for item in pending:
         try:
-            _sync_workflow(str(item["EnvironmentId"]), include_log=False)
+            _sync_workflow(str(item["EnvironmentId"]))
         except GitHubError:
             pass
     rows = query(
         """
-        SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt,
+        SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt, e.PortalUrl,
                c.CustomerId, c.Name AS CustomerName, c.TenantId,
                b.PortalName, b.PrimaryColor,
                t.TemplateId, t.Name AS TemplateName
@@ -205,6 +205,7 @@ def _environment_summary(row: dict) -> dict:
         "portalName": row["PortalName"],
         "primaryColor": row["PrimaryColor"],
         "slug": row["Slug"],
+        "portalUrl": row.get("PortalUrl"),
         "templateId": _id(row["TemplateId"]) if row["TemplateId"] else None,
         "templateName": row["TemplateName"],
     }
@@ -237,7 +238,12 @@ def _slug(name: str, environment_id: str) -> str:
     return f"{base}-{environment_id.replace('-', '')[:4]}"
 
 
-def _sync_workflow(environment_id: str, include_log: bool = True) -> None:
+def _provider_portal(log_text: str) -> str | None:
+    match = re.search(r"Provider portal:\s*(https://[a-z0-9.-]+\.azurestaticapps\.net)", log_text or "", re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _sync_workflow(environment_id: str) -> None:
     envs = query(
         "SELECT Slug, Status FROM dbo.Environment WHERE EnvironmentId = %s",
         (environment_id,),
@@ -286,13 +292,20 @@ def _sync_workflow(environment_id: str, include_log: bool = True) -> None:
         run = get_run(int(run_id))
         completed = run.get("status") == "completed"
         log_text = row["LogText"] or ""
-        if include_log or completed:
+        progress = ""
+        try:
+            progress = fetch_progress(int(run_id))
+        except GitHubError:
+            progress = ""
+        if completed:
             try:
                 downloaded = fetch_log(int(run_id))
-                if downloaded:
+                if downloaded and not downloaded.startswith("Workflow is queued"):
                     log_text = downloaded
             except GitHubError:
                 pass
+        elif progress:
+            log_text = progress
         if completed:
             ok = run.get("conclusion") == "success"
             if destroying:
@@ -309,10 +322,23 @@ def _sync_workflow(environment_id: str, include_log: bool = True) -> None:
                 """,
                 ("Succeeded" if ok else "Failed", finished, log_text, log_id),
             )
-            execute(
-                "UPDATE dbo.Environment SET Status = %s WHERE EnvironmentId = %s",
-                (environment_status, environment_id),
-            )
+            if destroying and ok:
+                execute(
+                    "UPDATE dbo.Environment SET Status = %s, PortalUrl = NULL WHERE EnvironmentId = %s",
+                    (environment_status, environment_id),
+                )
+            else:
+                portal_url = _provider_portal(log_text) if ok else None
+                if portal_url:
+                    execute(
+                        "UPDATE dbo.Environment SET Status = %s, PortalUrl = %s WHERE EnvironmentId = %s",
+                        (environment_status, portal_url, environment_id),
+                    )
+                else:
+                    execute(
+                        "UPDATE dbo.Environment SET Status = %s WHERE EnvironmentId = %s",
+                        (environment_status, environment_id),
+                    )
             return
         if log_text != (row["LogText"] or ""):
             execute(
@@ -335,7 +361,7 @@ def environment_detail(environment_id: str):
     _sync_workflow(environment_id)
     rows = query(
         """
-        SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt,
+        SELECT e.EnvironmentId, e.Name, e.Slug, e.Status, e.ExpiresAt, e.CreatedAt, e.PortalUrl,
                c.CustomerId, c.Name AS CustomerName, c.TenantId,
                b.PortalName, b.PrimaryColor, b.SecondaryColor,
                t.TemplateId, t.Name AS TemplateName

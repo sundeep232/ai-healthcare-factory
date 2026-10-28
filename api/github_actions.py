@@ -55,6 +55,8 @@ def _request(method: str, path: str, body: dict | None = None, accept: str = "ap
         except json.JSONDecodeError:
             message = ""
         raise GitHubError(f"GitHub returned {exc.code}. {message}".strip()) from None
+    except (urllib.error.URLError, TimeoutError):
+        raise GitHubError("GitHub did not respond in time") from None
 
 
 def dispatch_workflow(
@@ -145,11 +147,39 @@ def _job_log(job_id: int) -> str:
             location = exc.headers.get("Location")
             if not location:
                 return ""
-            with urllib.request.urlopen(location, timeout=60) as downloaded:
-                return downloaded.read().decode("utf-8", errors="replace")
+            try:
+                with urllib.request.urlopen(location, timeout=60) as downloaded:
+                    return downloaded.read().decode("utf-8", errors="replace")
+            except (urllib.error.URLError, TimeoutError):
+                return ""
         if exc.code == 404:
             return ""
         raise GitHubError(f"GitHub returned {exc.code} for the job log") from None
+    except (urllib.error.URLError, TimeoutError):
+        return ""
+
+
+def fetch_progress(run_id: int) -> str:
+    payload = _request("GET", f"/actions/runs/{run_id}/jobs")
+    jobs = payload.get("jobs", []) if payload else []
+    if not jobs:
+        return "Workflow is queued. The log will appear when the job starts."
+    lines = []
+    for job in jobs:
+        lines.append(f"{job.get('name', 'job')}: {job.get('status', 'unknown')}")
+        for step in job.get("steps") or []:
+            status = step.get("status")
+            conclusion = step.get("conclusion")
+            if status == "completed" and conclusion == "success":
+                mark = "done"
+            elif status == "completed":
+                mark = conclusion or "failed"
+            elif status == "in_progress":
+                mark = "running"
+            else:
+                mark = "waiting"
+            lines.append(f"  {mark:<8} {step.get('name', 'step')}")
+    return "\n".join(lines)
 
 
 def fetch_log(run_id: int) -> str:

@@ -38,11 +38,6 @@ function templateResources(template: Template | undefined): string[] {
   return names && names.length > 0 ? names : ["sql", "portal"];
 }
 
-function suggestedMembers(template: Template | undefined) {
-  const count = template?.definition.syntheticMembers;
-  return count && count >= 10 && count <= 1000 ? count : 250;
-}
-
 function resourceText(names: string[]) {
   return names.map((name) => RESOURCE_LABELS[name] ?? name).join(", ");
 }
@@ -62,20 +57,75 @@ function shownStatus(environment: { status: string; expiresAt: string | null }) 
   return environment.status;
 }
 
+const VIEW_PATH: Record<View, string> = {
+  home: "/home",
+  environments: "/environments",
+  create: "/create",
+  templates: "/templates",
+  customers: "/customers",
+  analytics: "/analytics",
+};
+
+function routeFromPath(pathname: string): { view: View; environmentId: string | null } {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] === "environments" && /^[0-9a-f-]{36}$/i.test(parts[1] ?? "")) {
+    return { view: "environments", environmentId: parts[1] };
+  }
+  const view = (Object.keys(VIEW_PATH) as View[]).find((item) => VIEW_PATH[item] === `/${parts[0] ?? ""}`);
+  return { view: view ?? "environments", environmentId: null };
+}
+
+function knownPath(pathname: string) {
+  const route = routeFromPath(pathname);
+  return route.environmentId ? `/environments/${route.environmentId}` : VIEW_PATH[route.view];
+}
+
+function initialPath() {
+  const path = window.location.pathname;
+  if (path === "/") {
+    window.history.replaceState(null, "", "/environments");
+    return "/environments";
+  }
+  const canonical = knownPath(path);
+  if (canonical !== path) window.history.replaceState(null, "", canonical);
+  return canonical;
+}
+
 export function App() {
   const [signedIn, setSignedIn] = useState(() => Boolean(authToken()));
-  const [view, setView] = useState<View>("environments");
+  const [path, setPath] = useState(initialPath);
   const [environments, setEnvironments] = useState<EnvironmentSummary[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [totalCost, setTotalCost] = useState(0);
   const [selected, setSelected] = useState<EnvironmentDetail | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [templateId, setTemplateId] = useState("");
-  const [memberCount, setMemberCount] = useState("250");
+  const [memberCount, setMemberCount] = useState("");
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const environmentsRef = useRef(environments);
+  environmentsRef.current = environments;
+  const route = routeFromPath(path);
+  const view = route.view;
+  const environmentId = route.environmentId;
+
+  function go(next: string) {
+    if (window.location.pathname === next) return;
+    window.history.pushState(null, "", next);
+    setPath(next);
+    setError(null);
+  }
+
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   async function loadLists() {
     const [environmentRows, templateRows, customerRows, analytics] = await Promise.all([
@@ -89,9 +139,6 @@ export function App() {
     setCustomers(customerRows);
     setUsage(analytics.rows);
     setTotalCost(analytics.totalCost);
-    setCustomerId((current) => current || customerRows[0]?.id || "");
-    setTemplateId((current) => current || templateRows[0]?.id || "");
-    setMemberCount((current) => current === "250" ? String(suggestedMembers(templateRows[0])) : current);
   }
 
   useEffect(() => {
@@ -116,15 +163,49 @@ export function App() {
   }, [signedIn, workflowRunning]);
 
   function openView(next: View) {
-    setView(next);
-    setSelected(null);
-    setError(null);
+    go(VIEW_PATH[next]);
   }
 
-  async function openEnvironment(id: string) {
-    setError(null);
-    setSelected(await fetchEnvironment(id));
+  function openEnvironment(id: string) {
+    go(`/environments/${id}`);
   }
+
+  useEffect(() => {
+    if (!signedIn || !environmentId) {
+      setSelected(null);
+      setLogLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const summary = environmentsRef.current.find((item) => item.id === environmentId);
+    setError(null);
+    setLogLoading(true);
+    if (summary) {
+      setSelected({
+        ...summary,
+        secondaryColor: null,
+        deployments: [],
+        conversations: [],
+        usage: [],
+      });
+    }
+    fetchEnvironment(environmentId)
+      .then((detail) => {
+        if (!cancelled) setSelected(detail);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        if (!authToken()) setSignedIn(false);
+        else setError(err.message || "Could not open the deployment log");
+        if (!summary) setSelected(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn, environmentId]);
 
   useEffect(() => {
     if (!selected || (selected.status !== "Deploying" && selected.status !== "Destroying")) return;
@@ -146,8 +227,13 @@ export function App() {
 
   async function onCreate(event: FormEvent) {
     event.preventDefault();
+    if (creatingRef.current) return;
     setError(null);
-    const demoName = name || "New demo";
+    const demoName = name.trim();
+    if (!demoName || !customerId || !templateId) {
+      setError("Name, customer, and template are required");
+      return;
+    }
     const selectedTemplate = templates.find((item) => item.id === templateId);
     const resources = templateResources(selectedTemplate);
     const members = Number(memberCount);
@@ -155,39 +241,38 @@ export function App() {
       setError("Synthetic members must be a whole number from 10 to 1000");
       return;
     }
+    creatingRef.current = true;
+    setCreating(true);
     const memberNote = resources.includes("sql") ? ` Azure SQL will load ${members} synthetic members.` : "";
-    if (!window.confirm(`Create the Azure resource group for ${demoName}? It will include ${resourceText(resources)}.${memberNote}`)) return;
-    try {
-      const created = await createEnvironment({ customerId, templateId, name: demoName, syntheticMembers: members });
-      setName("");
-      await loadLists();
-      setSelected(created);
-      setView("environments");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the demo");
+    const confirmed = window.confirm(`Deploy the Azure resource group for ${demoName}? It will include ${resourceText(resources)}.${memberNote}`);
+    if (!confirmed) {
+      creatingRef.current = false;
+      setCreating(false);
+      return;
     }
-  }
-
-  async function onCopy(environment: EnvironmentSummary) {
-    setError(null);
-    if (!environment.templateId) return;
-    const resources = templateResources(templates.find((item) => item.id === environment.templateId));
-    if (!window.confirm(`Create a new Azure resource group for ${environment.name} copy? It will include ${resourceText(resources)}.`)) return;
     try {
       const created = await createEnvironment({
-        customerId: environment.customerId,
-        templateId: environment.templateId,
-        name: `${environment.name} copy`,
+        customerId,
+        templateId,
+        name: demoName,
+        syntheticMembers: resources.includes("sql") ? members : undefined,
       });
+      setName("");
+      setCustomerId("");
+      setTemplateId("");
+      setMemberCount("");
       await loadLists();
-      setSelected(created);
-      setView("environments");
+      go(`/environments/${created.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not copy the demo");
+      setError(err instanceof Error ? err.message : "Could not create the demo");
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
     }
   }
 
   async function onDelete(environment: EnvironmentSummary) {
+    if (environment.status === "Deploying" || environment.status === "Destroying") return;
     const azure = Boolean(environment.slug) && environment.status !== "Destroyed";
     const prompt = azure
       ? `Destroy the Azure resource group for ${environment.name}? This removes that group and the Azure resources created for it.`
@@ -198,10 +283,9 @@ export function App() {
       const updated = await deleteEnvironment(environment.id);
       await loadLists();
       if (updated) {
-        setSelected(updated);
-        setView("environments");
-      } else if (selected?.id === environment.id) {
-        setSelected(null);
+        go(`/environments/${environment.id}`);
+      } else if (environmentId === environment.id) {
+        go("/environments");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete the demo");
@@ -221,7 +305,7 @@ export function App() {
       <aside className="nav">
         <div className="brand">Optum</div>
         {nav.map((item) => (
-          <button key={item.id} className={view === item.id && !selected ? "active" : ""} onClick={() => openView(item.id)}>
+          <button key={item.id} className={view === item.id && (!environmentId || item.id === "environments") ? "active" : ""} onClick={() => openView(item.id)}>
             {item.icon}
             {item.label}
           </button>
@@ -232,8 +316,10 @@ export function App() {
         <header className="appbar">Demo Factory</header>
         <main className="content">
           {error && <p className="error">{error}</p>}
-          {selected ? (
-            <Detail item={selected} onBack={() => setSelected(null)} />
+          {environmentId && selected?.id === environmentId ? (
+            <Detail item={selected} loading={logLoading} onBack={() => go("/environments")} />
+          ) : environmentId ? (
+            <p className="meta">Loading the deployment log…</p>
           ) : view === "home" ? (
             <>
               <div className="top"><h2>Home</h2></div>
@@ -242,7 +328,7 @@ export function App() {
                 <div className="stat"><span>Deploying</span><strong>{counts.Deploying}</strong></div>
                 <div className="stat"><span>Expired</span><strong>{counts.Expired}</strong></div>
               </div>
-              <EnvironmentTable environments={environments} onOpen={openEnvironment} onCopy={onCopy} onDelete={onDelete} />
+              <EnvironmentTable environments={environments} onOpen={openEnvironment} onDelete={onDelete} />
             </>
           ) : view === "environments" ? (
             <>
@@ -252,7 +338,7 @@ export function App() {
                   <PlusIcon /> Create Demo
                 </button>
               </div>
-              <EnvironmentTable environments={environments} onOpen={openEnvironment} onCopy={onCopy} onDelete={onDelete} />
+              <EnvironmentTable environments={environments} onOpen={openEnvironment} onDelete={onDelete} />
             </>
           ) : view === "create" ? (
             <>
@@ -261,11 +347,12 @@ export function App() {
               <form className="form" onSubmit={onCreate}>
                 <label>
                   Name
-                  <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Molina Demo" />
+                  <input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Enter a demo name" />
                 </label>
                 <label>
                   Customer
-                  <select value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
+                  <select required value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
+                    <option value="">Select a customer</option>
                     {customers.map((customer) => (
                       <option key={customer.id} value={customer.id}>{customer.name}</option>
                     ))}
@@ -273,24 +360,24 @@ export function App() {
                 </label>
                 <label>
                   Template
-                  <select value={templateId} onChange={(event) => {
-                    const nextId = event.target.value;
-                    setTemplateId(nextId);
-                    setMemberCount(String(suggestedMembers(templates.find((item) => item.id === nextId))));
+                  <select required value={templateId} onChange={(event) => {
+                    setTemplateId(event.target.value);
+                    setMemberCount("");
                   }}>
+                    <option value="">Select a template</option>
                     {templates.map((template) => (
                       <option key={template.id} value={template.id}>{template.name}</option>
                     ))}
                   </select>
                 </label>
-                {templateResources(templates.find((item) => item.id === templateId)).includes("sql") && (
+                {templateId && templateResources(templates.find((item) => item.id === templateId)).includes("sql") && (
                   <label>
                     Synthetic members
-                    <input type="number" min={10} max={1000} value={memberCount} onChange={(event) => setMemberCount(event.target.value)} />
+                    <input required type="number" min={10} max={1000} value={memberCount} onChange={(event) => setMemberCount(event.target.value)} placeholder="10 to 1000" />
                   </label>
                 )}
-                <p className="note">Resources: {resourceText(templateResources(templates.find((item) => item.id === templateId)))}</p>
-                <button className="primary" type="submit"><PlusIcon /> Create Demo</button>
+                {templateId && <p className="note">Resources: {resourceText(templateResources(templates.find((item) => item.id === templateId)))}</p>}
+                <button className="primary" type="submit" disabled={creating}>{creating ? "Deploying…" : <><PlusIcon /> Create Demo</>}</button>
               </form>
             </>
           ) : view === "templates" ? (
@@ -399,12 +486,10 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
 function EnvironmentTable({
   environments,
   onOpen,
-  onCopy,
   onDelete,
 }: {
   environments: EnvironmentSummary[];
   onOpen: (id: string) => void;
-  onCopy: (environment: EnvironmentSummary) => void;
   onDelete: (environment: EnvironmentSummary) => void;
 }) {
   return (
@@ -421,9 +506,15 @@ function EnvironmentTable({
         <tbody>
           {environments.map((environment) => {
             const status = shownStatus(environment);
+            const busy = environment.status === "Deploying" || environment.status === "Destroying";
             return (
               <tr key={environment.id}>
-                <td>{environment.name}</td>
+                <td>
+                  <div>{environment.name}</div>
+                  {environment.portalUrl && (
+                    <a className="portal-link" href={environment.portalUrl} target="_blank" rel="noreferrer">Provider portal</a>
+                  )}
+                </td>
                 <td>{customerLabel(environment.customerName)}</td>
                 <td>
                   <span className="status">
@@ -433,9 +524,14 @@ function EnvironmentTable({
                 </td>
                 <td>
                   <div className="actions">
-                    <button className="icon" aria-label={`Open ${environment.name}`} onClick={() => onOpen(environment.id)}><PlayIcon /></button>
-                    <button className="icon" aria-label={`Copy ${environment.name}`} onClick={() => onCopy(environment)}><CopyIcon /></button>
-                    <button className="icon danger" aria-label={`${environment.slug && environment.status !== "Destroyed" ? "Destroy" : "Delete"} ${environment.name}`} onClick={() => onDelete(environment)}><TrashIcon /></button>
+                    <button className="icon" title={busy ? `${status} in progress` : "View deployment activity"} aria-label={`View deployment activity for ${environment.name}`} onClick={() => onOpen(environment.id)}><ActivityIcon /></button>
+                    <button
+                      className="icon danger"
+                      title={busy ? `${status} is already running` : environment.slug && environment.status !== "Destroyed" ? "Destroy demo" : "Delete demo"}
+                      aria-label={busy ? `${status} is already running` : `${environment.slug && environment.status !== "Destroyed" ? "Destroy" : "Delete"} ${environment.name}`}
+                      disabled={busy}
+                      onClick={() => onDelete(environment)}
+                    ><TrashIcon /></button>
                   </div>
                 </td>
               </tr>
@@ -447,14 +543,18 @@ function EnvironmentTable({
   );
 }
 
-function Detail({ item, onBack }: { item: EnvironmentDetail; onBack: () => void }) {
+function Detail({ item, loading, onBack }: { item: EnvironmentDetail; loading: boolean; onBack: () => void }) {
   const cost = item.usage.reduce((sum, row) => sum + row.cost, 0);
   const status = shownStatus(item);
   const latest = item.deployments[0];
-  const logRef = useRef<HTMLPreElement>(null);
+  const logRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [latest?.log]);
+    logRef.current?.scrollIntoView({ block: "start" });
+  }, [item.id]);
+  useEffect(() => {
+    const pre = logRef.current?.querySelector("pre");
+    if (pre) pre.scrollTop = pre.scrollHeight;
+  }, [latest?.log, loading]);
   return (
     <>
       <button className="back" onClick={onBack}>Back</button>
@@ -463,14 +563,16 @@ function Detail({ item, onBack }: { item: EnvironmentDetail; onBack: () => void 
         <span className="status"><span className={`dot ${status.toLowerCase()}`} />{status}</span>
       </div>
       <p className="note">{customerLabel(item.customerName)} · {item.templateName}</p>
-      <section className="panel">
-        <h3>Deployment</h3>
+      {item.portalUrl && (
+        <p><a className="portal-link" href={item.portalUrl} target="_blank" rel="noreferrer">Open provider portal</a></p>
+      )}
+      <section className="panel" ref={logRef}>
+        <h3>{status === "Destroying" ? "Destroy in progress" : status === "Deploying" ? "Deploy in progress" : "Deployment"}</h3>
+        {(status === "Destroying" || status === "Deploying") && <p className="meta">The Terraform steps refresh every few seconds.</p>}
         {item.deployments.map((log) => (
           <p key={log.id} className="meta">{log.action} · {log.status}. {log.message}</p>
         ))}
-        {(item.slug || latest?.log) && (
-          <pre className="deploy-log" ref={logRef}>{latest?.log || "Waiting for the workflow log."}</pre>
-        )}
+        <pre className="deploy-log">{loading ? "Loading the Terraform log…" : (latest?.log || "Waiting for the workflow log.")}</pre>
       </section>
       <section className="panel">
         <h3>Conversations</h3>
@@ -508,11 +610,8 @@ function ChartIcon() {
 function PlusIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M12 5v14M5 12h14" /></svg>;
 }
-function PlayIcon() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m8 6 10 6-10 6V6Z" /></svg>;
-}
-function CopyIcon() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></svg>;
+function ActivityIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 12h4l2.2-6 3.6 12L15 12h6" /></svg>;
 }
 function TrashIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 7h14" /><path d="M9 7V5h6v2" /><path d="M8 7l1 12h6l1-12" /></svg>;

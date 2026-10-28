@@ -64,6 +64,7 @@ CREATE TABLE dbo.Environment (
     Slug          nvarchar(63)     NULL,
     Status        nvarchar(32)     NOT NULL,
     ExpiresAt     datetime2(0)     NULL,
+    PortalUrl     nvarchar(300)    NULL,
     CreatedAt     datetime2(0)     NOT NULL
 );
 

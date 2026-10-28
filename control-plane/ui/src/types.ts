@@ -38,6 +38,7 @@ export type EnvironmentSummary = {
   templateId: string | null;
   templateName: string | null;
   slug: string | null;
+  portalUrl: string | null;
 };
 
 export type EnvironmentDetail = EnvironmentSummary & {

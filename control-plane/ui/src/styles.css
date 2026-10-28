@@ -113,11 +113,11 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 .primary:hover { background: #2f5fe8; }
+.primary:disabled { background: #9bb0e8; cursor: not-allowed; box-shadow: none; }
 
 .table-wrap {
   border: 1px solid #e6ebf2;
   border-radius: 12px;
-  overflow: hidden;
 }
 
 table { width: 100%; border-collapse: collapse; }
@@ -160,6 +160,7 @@ th.right, td.right { text-align: right; }
 
 .actions { display: flex; justify-content: flex-end; gap: 4px; }
 .icon {
+  position: relative;
   width: 34px;
   height: 34px;
   border: 0;
@@ -171,7 +172,25 @@ th.right, td.right { text-align: right; }
   place-items: center;
 }
 .icon:hover { background: #f1f4f8; }
-.icon.danger:hover { background: #fdecec; color: #b42318; }
+.icon:disabled,
+.icon:disabled:hover { opacity: 0.35; cursor: not-allowed; background: transparent; color: #31445f; }
+.icon.danger:hover:not(:disabled) { background: #fdecec; color: #b42318; }
+.icon:hover::after {
+  content: attr(title);
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 3;
+  background: #1c2434;
+  color: white;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  padding: 6px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 .stats {
   display: grid;
@@ -200,6 +219,7 @@ th.right, td.right { text-align: right; }
   background: white;
 }
 .note { color: #6d7b8f; margin: 0 0 8px; }
+.portal-link { color: #0b3a82; font-weight: 700; }
 .error { color: #9d1c1c; background: #fdecec; padding: 10px 12px; border-radius: 8px; }
 .back {
   border: 0;

@@ -27,9 +27,9 @@ variable "model_version" {
 }
 
 variable "capacity" {
-  description = "Thousands of tokens per minute for the chat deployment."
+  description = "Thousands of tokens per minute for the chat deployment. 1 is too small for a tool-calling conversation and returns HTTP 429."
   type        = number
-  default     = 1
+  default     = 50
 }
 
 variable "tags" {

@@ -1,0 +1,104 @@
+name: Deploy control plane
+
+run-name: Deploy control plane
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: control-plane/ui/package-lock.json
+
+      - name: Read control-plane targets
+        id: targets
+        working-directory: control-plane/infra/main
+        env:
+          ARM_USE_OIDC: "true"
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TF_IN_AUTOMATION: "true"
+        run: |
+          set -euo pipefail
+          terraform init -input=false \
+            -backend-config="resource_group_name=rg-ahf-tfstate" \
+            -backend-config="storage_account_name=stahftf4jqp3v" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="use_oidc=true"
+          rg="$(terraform output -raw resource_group_name)"
+          api_host="$(terraform output -raw api_hostname)"
+          portal_host="$(terraform output -raw portal_hostname)"
+          app_name="$(az webapp list --resource-group "$rg" --query "[?defaultHostName=='${api_host}'].name | [0]" -o tsv)"
+          swa_name="$(az staticwebapp list --resource-group "$rg" --query "[?defaultHostname=='${portal_host}'].name | [0]" -o tsv)"
+          if [[ -z "$app_name" || -z "$swa_name" ]]; then
+            echo "Could not find the control-plane App Service or Static Web App"
+            exit 1
+          fi
+          echo "resource_group=$rg" >> "$GITHUB_OUTPUT"
+          echo "api_host=$api_host" >> "$GITHUB_OUTPUT"
+          echo "portal_host=$portal_host" >> "$GITHUB_OUTPUT"
+          echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
+          echo "swa_name=$swa_name" >> "$GITHUB_OUTPUT"
+          echo "API: https://${api_host}"
+          echo "Portal: https://${portal_host}"
+
+      - name: Deploy API
+        working-directory: control-plane/api
+        run: |
+          set -euo pipefail
+          zip -qr "$RUNNER_TEMP/control-plane-api.zip" . -x '*.pyc' -x '*__pycache__*' -x '.env'
+          az webapp deployment source config-zip \
+            --resource-group "${{ steps.targets.outputs.resource_group }}" \
+            --name "${{ steps.targets.outputs.app_name }}" \
+            --src "$RUNNER_TEMP/control-plane-api.zip"
+          healthy=0
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            code="$(curl -s -o /dev/null -w "%{http_code}" "https://${{ steps.targets.outputs.api_host }}/api/health" || true)"
+            if [[ "$code" == "200" || "$code" == "401" ]]; then
+              healthy=1
+              break
+            fi
+            sleep 20
+          done
+          if [[ "$healthy" != "1" ]]; then
+            echo "Control-plane API did not become healthy"
+            exit 1
+          fi
+
+      - name: Deploy portal
+        working-directory: control-plane/ui
+        env:
+          VITE_API_BASE_URL: https://${{ steps.targets.outputs.api_host }}
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          token="$(az staticwebapp secrets list --name "${{ steps.targets.outputs.swa_name }}" --resource-group "${{ steps.targets.outputs.resource_group }}" --query properties.apiKey -o tsv)"
+          token_mask="${token//%/%25}"
+          token_mask="${token_mask//$'\n'/%0A}"
+          echo "::add-mask::${token_mask}"
+          npx --yes @azure/static-web-apps-cli deploy dist --deployment-token "$token" --env production
+          echo "Portal: https://${{ steps.targets.outputs.portal_host }}"

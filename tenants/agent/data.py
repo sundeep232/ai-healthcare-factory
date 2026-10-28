@@ -56,8 +56,6 @@ def query(sql: str, params: tuple = ()):
 def find_members(name: str = "", member_number: str = "") -> dict:
     name = name.strip()
     member_number = member_number.strip()
-    if len(name) < 2 and len(member_number) < 2:
-        return {"error": "Provide a member name or member number."}
     like_name = f"%{name}%"
     like_number = f"%{member_number}%"
     rows = query(
@@ -75,21 +73,30 @@ def find_members(name: str = "", member_number: str = "") -> dict:
     return {"members": rows}
 
 
-def member_claims(member_id: str, status: str = "") -> dict:
+def member_claims(member_id: str = "", name: str = "", status: str = "") -> dict:
+    member_id = member_id.strip()
+    name = name.strip()
+    status = status.strip()
+    if len(member_id) < 2 and len(name) < 2:
+        return {"error": "Provide a member id or a member name."}
+    like_name = f"%{name}%"
     rows = query(
         """
-        SELECT TOP 20 c.claim_id, c.claim_number, c.service_date, c.claim_status, c.billed_amount,
+        SELECT TOP 25 c.claim_id, c.claim_number, c.service_date, c.claim_status, c.billed_amount,
                c.allowed_amount, c.paid_amount, c.diagnosis_code, d.description AS diagnosis,
                c.procedure_code, pr.description AS procedure_name, c.place_of_service,
-               pv.provider_name
+               pv.provider_name, m.member_id, m.first_name, m.last_name, m.member_number
         FROM dbo.CLAIMS c
+        JOIN dbo.[MEMBER] m ON m.member_id = c.member_id
         JOIN dbo.PROVIDER pv ON pv.provider_id = c.provider_id
         JOIN dbo.DIAGNOSIS_CODE d ON d.diagnosis_code = c.diagnosis_code
         JOIN dbo.PROCEDURE_CODE pr ON pr.procedure_code = c.procedure_code
-        WHERE c.member_id = %s AND (%s = N'' OR c.claim_status = %s)
+        WHERE ((%s <> N'' AND c.member_id = %s)
+            OR (%s <> N'' AND (m.last_name LIKE %s OR m.first_name + N' ' + m.last_name LIKE %s)))
+          AND (%s = N'' OR c.claim_status = %s)
         ORDER BY c.service_date DESC
         """,
-        (member_id, status, status),
+        (member_id, member_id, name, like_name, like_name, status, status),
     )
     return {"claims": rows}
 
@@ -145,6 +152,165 @@ def portfolio() -> dict:
         "care_by_program": care,
         "top_diagnoses": diagnoses,
     }
+
+
+def portal_summary() -> dict:
+    return portfolio()
+
+
+def portal_claims(q: str = "", status: str = "") -> dict:
+    q = q.strip()[:80]
+    status = status.strip()
+    like = f"%{q}%"
+    rows = query(
+        """
+        SELECT TOP 40 c.claim_id, c.claim_number, c.service_date, c.claim_status,
+               c.billed_amount, c.allowed_amount, c.paid_amount,
+               m.member_id, m.first_name, m.last_name, m.member_number, pv.provider_name
+        FROM dbo.CLAIMS c
+        JOIN dbo.[MEMBER] m ON m.member_id = c.member_id
+        JOIN dbo.PROVIDER pv ON pv.provider_id = c.provider_id
+        WHERE (%s = N'' OR c.claim_number LIKE %s OR c.claim_id LIKE %s
+               OR m.member_number LIKE %s OR m.last_name LIKE %s
+               OR m.first_name + N' ' + m.last_name LIKE %s)
+          AND (%s = N'' OR c.claim_status = %s)
+        ORDER BY c.service_date DESC
+        """,
+        (q, like, like, like, like, like, status, status),
+    )
+    return {"claims": rows}
+
+
+def portal_claim(claim_id: str) -> dict:
+    rows = query(
+        """
+        SELECT c.claim_id, c.claim_number, c.service_date, c.claim_status, c.billed_amount,
+               c.allowed_amount, c.paid_amount, c.place_of_service, c.created_at,
+               c.diagnosis_code, d.description AS diagnosis, c.procedure_code,
+               pr.description AS procedure_name, m.member_id, m.member_number, m.first_name,
+               m.last_name, m.date_of_birth, m.city, m.state, p.plan_name, p.plan_type,
+               pv.provider_name, pv.npi_number, pv.specialty, pv.provider_type,
+               a.authorization_id, a.authorization_number, a.status AS authorization_status,
+               a.service_type
+        FROM dbo.CLAIMS c
+        JOIN dbo.[MEMBER] m ON m.member_id = c.member_id
+        JOIN dbo.[PLAN] p ON p.plan_id = m.plan_id
+        JOIN dbo.DIAGNOSIS_CODE d ON d.diagnosis_code = c.diagnosis_code
+        JOIN dbo.PROCEDURE_CODE pr ON pr.procedure_code = c.procedure_code
+        JOIN dbo.PROVIDER pv ON pv.provider_id = c.provider_id
+        LEFT JOIN dbo.[AUTHORIZATION] a ON a.authorization_id = c.authorization_id
+        WHERE c.claim_id = %s
+        """,
+        (claim_id,),
+    )
+    if not rows:
+        return {"error": "Claim was not found"}
+    return {"claim": rows[0]}
+
+
+def portal_authorizations(q: str = "", status: str = "") -> dict:
+    q = q.strip()[:80]
+    status = status.strip()
+    like = f"%{q}%"
+    rows = query(
+        """
+        SELECT TOP 40 a.authorization_id, a.authorization_number, a.service_type, a.status,
+               a.request_date, a.start_date, a.end_date, a.authorized_units,
+               m.member_id, m.first_name, m.last_name, m.member_number, pv.provider_name
+        FROM dbo.[AUTHORIZATION] a
+        JOIN dbo.[MEMBER] m ON m.member_id = a.member_id
+        JOIN dbo.PROVIDER pv ON pv.provider_id = a.provider_id
+        WHERE (%s = N'' OR a.authorization_number LIKE %s OR a.authorization_id LIKE %s
+               OR m.member_number LIKE %s OR m.last_name LIKE %s
+               OR m.first_name + N' ' + m.last_name LIKE %s)
+          AND (%s = N'' OR a.status = %s)
+        ORDER BY a.request_date DESC
+        """,
+        (q, like, like, like, like, like, status, status),
+    )
+    return {"authorizations": rows}
+
+
+def portal_authorization(authorization_id: str) -> dict:
+    rows = query(
+        """
+        SELECT a.authorization_id, a.authorization_number, a.service_type, a.status,
+               a.request_date, a.approval_date, a.start_date, a.end_date, a.authorized_units,
+               a.diagnosis_code, d.description AS diagnosis, a.procedure_code,
+               pr.description AS procedure_name, m.member_id, m.member_number, m.first_name,
+               m.last_name, m.date_of_birth, p.plan_name, pv.provider_name, pv.npi_number, pv.specialty
+        FROM dbo.[AUTHORIZATION] a
+        JOIN dbo.[MEMBER] m ON m.member_id = a.member_id
+        JOIN dbo.[PLAN] p ON p.plan_id = m.plan_id
+        JOIN dbo.DIAGNOSIS_CODE d ON d.diagnosis_code = a.diagnosis_code
+        JOIN dbo.PROCEDURE_CODE pr ON pr.procedure_code = a.procedure_code
+        JOIN dbo.PROVIDER pv ON pv.provider_id = a.provider_id
+        WHERE a.authorization_id = %s
+        """,
+        (authorization_id,),
+    )
+    if not rows:
+        return {"error": "Authorization was not found"}
+    return {"authorization": rows[0]}
+
+
+def portal_members(q: str = "") -> dict:
+    q = q.strip()[:80]
+    like = f"%{q}%"
+    rows = query(
+        """
+        SELECT TOP 40 m.member_id, m.member_number, m.first_name, m.last_name, m.date_of_birth,
+               m.city, m.state, m.gender, m.effective_date, m.termination_date,
+               p.plan_name, p.plan_type
+        FROM dbo.[MEMBER] m
+        JOIN dbo.[PLAN] p ON p.plan_id = m.plan_id
+        WHERE %s = N'' OR m.member_number LIKE %s OR m.last_name LIKE %s
+           OR m.first_name + N' ' + m.last_name LIKE %s OR m.member_id LIKE %s
+        ORDER BY m.last_name, m.first_name
+        """,
+        (q, like, like, like, like),
+    )
+    return {"members": rows}
+
+
+def portal_member(member_id: str) -> dict:
+    rows = query(
+        """
+        SELECT m.member_id, m.member_number, m.first_name, m.last_name, m.date_of_birth, m.gender,
+               m.city, m.state, m.effective_date, m.termination_date, p.plan_name, p.plan_type
+        FROM dbo.[MEMBER] m
+        JOIN dbo.[PLAN] p ON p.plan_id = m.plan_id
+        WHERE m.member_id = %s
+        """,
+        (member_id,),
+    )
+    if not rows:
+        return {"error": "Member was not found"}
+    return {
+        "member": rows[0],
+        "claims": member_claims(member_id=member_id).get("claims", []),
+        "authorizations": member_authorizations(member_id).get("authorizations", []),
+        "care": member_care(member_id).get("care", []),
+    }
+
+
+def portal_care(q: str = "") -> dict:
+    q = q.strip()[:80]
+    like = f"%{q}%"
+    rows = query(
+        """
+        SELECT TOP 40 c.care_management_id, c.program_type, c.status, c.risk_level,
+               c.enrollment_date, c.next_followup_date, c.outcome, c.notes,
+               m.member_id, m.first_name, m.last_name, m.member_number
+        FROM dbo.CARE_MANAGEMENT c
+        JOIN dbo.[MEMBER] m ON m.member_id = c.member_id
+        WHERE %s = N'' OR c.program_type LIKE %s OR m.last_name LIKE %s
+           OR m.member_number LIKE %s OR m.first_name + N' ' + m.last_name LIKE %s
+        ORDER BY c.enrollment_date DESC
+        """,
+        (q, like, like, like, like),
+    )
+    return {"care": rows}
 
 
 TOOLS = {
